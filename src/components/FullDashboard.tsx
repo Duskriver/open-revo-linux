@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { HardwareState, PowerMode, POWER_MODES } from '../types/hardware';
+import { HardwareState, PowerMode } from '../types/hardware';
 import { OverviewView } from './OverviewView';
 import { LightingStudio } from './LightingStudio';
 import { GpuModeView } from './GpuModeView';
@@ -13,9 +13,8 @@ import { PluginsView, CustomPluginItem } from './PluginsView';
 import { PluginTabHost } from './PluginTabHost';
 import { ModuleErrorBoundary } from './ModuleErrorBoundary';
 import { BUILTIN_MODULE_SLOTS, BuiltinTabId, isSlotActive, ModelCapabilities } from '../plugins/plugin_manifest';
-import logoImg from '../assets/logo.png';
+import { DashboardChrome } from './common/DashboardChrome';
 import {
-  Palette,
   Minimize2,
   X,
   Minus,
@@ -85,15 +84,6 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
   const [showOemModal, setShowOemModal] = useState(false);
   const [isSwitchingService, setIsSwitchingService] = useState(false);
   const [profileVersion, setProfileVersion] = useState(0);
-  const [copiedVersion, setCopiedVersion] = useState(false);
-
-  const handleCopyVersion = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(`v${__APP_VERSION__}`);
-    setCopiedVersion(true);
-    setTimeout(() => setCopiedVersion(false), 1500);
-  };
-
   const checkOemGuard = (action: () => void) => {
     if (status.oem_running) {
       setShowOemModal(true);
@@ -345,40 +335,6 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
     } catch (_) {}
   }, []);
 
-  // Sub-nav tab horizontal scroll state & edge fade indicators
-  const navBarRef = useRef<HTMLDivElement>(null);
-  const [canScrollNavLeft, setCanScrollNavLeft] = useState(false);
-  const [canScrollNavRight, setCanScrollNavRight] = useState(false);
-
-  const checkNavScroll = () => {
-    const el = navBarRef.current;
-    if (!el) return;
-    setCanScrollNavLeft(el.scrollLeft > 2);
-    setCanScrollNavRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
-  };
-
-  useEffect(() => {
-    checkNavScroll();
-    const el = navBarRef.current;
-    if (!el) return;
-    el.addEventListener('scroll', checkNavScroll, { passive: true });
-    window.addEventListener('resize', checkNavScroll);
-    return () => {
-      el.removeEventListener('scroll', checkNavScroll);
-      window.removeEventListener('resize', checkNavScroll);
-    };
-  }, [status, isWaterCoolerEnabled, isCoolerConnected, moduleToggles, tabPlugins]);
-
-  useEffect(() => {
-    const el = navBarRef.current;
-    if (!el) return;
-    const activeBtn = el.querySelector('.nav-tab.active') as HTMLElement;
-    if (activeBtn) {
-      activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-    }
-    checkNavScroll();
-  }, [activeTab]);
-
   const handleToggleMaximize = async () => {
     try {
       const res = await invoke<boolean>('toggle_maximize_window');
@@ -400,7 +356,6 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
     }
   };
 
-  const currentModeInfo = POWER_MODES.find((m) => m.id === status.power_mode) || POWER_MODES[1];
 
   return (
 
@@ -410,237 +365,31 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
       data-theme={theme}
       data-form-factor={capabilities?.form_factor || 'gaming'}
     >
-      {/* Top Titlebar: Left Logo + Center Draggable Flex + Right Controls */}
-      <div
-        className="mech-titlebar shell-titlebar"
-        data-slot="titlebar"
-        data-tauri-drag-region
-        onDoubleClick={handleToggleMaximize}
-        style={{ flexShrink: 0, userSelect: 'none', cursor: 'default' }}
-      >
-        <div
-          style={{ display: 'flex', alignItems: 'center', gap: '10px' }}
-          data-tauri-drag-region
-        >
-          <div className="logo-badge" data-tauri-drag-region>
-            <img
-              src={logoImg}
-              alt="OpenRevo Logo"
-              data-tauri-drag-region
-              style={{
-                width: '22px',
-                height: '22px',
-                borderRadius: '4px',
-                objectFit: 'contain',
-                filter: `drop-shadow(0 0 8px ${currentModeInfo.color})`,
-              }}
-            />
-            <span style={{ fontSize: '15px', fontWeight: 800, letterSpacing: '0.08em' }} data-tauri-drag-region>OPENREVO</span>
-            <span
-              className="badge-tag"
-              onClick={handleCopyVersion}
-              title={`点击复制版本号: v${__APP_VERSION__}`}
-            >
-              {copiedVersion ? '已复制' : `PRO v${__APP_VERSION__}`}
-            </span>
-            {status.is_mock && (
-              <span
-                style={{
-                  fontSize: '9px',
-                  background: 'rgba(245, 158, 11, 0.2)',
-                  border: '1px solid rgba(245, 158, 11, 0.5)',
-                  color: '#fbbf24',
-                  padding: '1px 6px',
-                  borderRadius: '4px',
-                  fontWeight: 600,
-                }}
-              >
-                SAFE MOCK
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Central Draggable Area */}
-        <div
-          style={{ flex: 1, height: '100%', minWidth: '40px' }}
-          data-tauri-drag-region
-        />
-
-        {/* Window controls - Strictly isolated from drag events */}
-        <div
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', zIndex: 20 }}
-          data-tauri-drag-region="false"
-          onMouseDown={(e) => e.stopPropagation()}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          {status.oem_installed && status.oem_running && (
-            <button
-              onClick={() => handleTakeoverOem()}
-              disabled={isSwitchingService}
-              title="检测到机械革命官方电竞服务正在运行。点击后将一键停止并禁用官方服务，避免与 OpenRevo 争抢主板 EC 寄存器与屏幕闪烁。"
-              style={{
-                padding: '3px 8px',
-                borderRadius: '5px',
-                fontSize: '10px',
-                fontWeight: 600,
-                cursor: isSwitchingService ? 'wait' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                whiteSpace: 'nowrap',
-                transition: 'all 0.15s ease',
-                background: 'rgba(245, 158, 11, 0.15)',
-                color: '#fbbf24',
-                border: '1px solid rgba(245, 158, 11, 0.35)',
-              }}
-            >
-              {isSwitchingService ? <Loader2 size={11} className="animate-spin" /> : <Shield size={11} />}
-              <span>接管官方控制台</span>
-            </button>
-          )}
-
-          {/* 主题切换开关 (单色工业风 / 赛博多彩风格) */}
-          {onToggleTheme && (
-            <button
-              onClick={onToggleTheme}
-              title={theme === 'mono' ? '切换到：多彩风格' : '切换到：极致单色工业风'}
-              style={{
-                background: theme === 'cyber' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
-                border: theme === 'cyber' ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)',
-                color: theme === 'cyber' ? '#38bdf8' : 'var(--text-muted)',
-                cursor: 'pointer',
-                padding: '4px 7px',
-                borderRadius: '6px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <Palette className="w-3.5 h-3.5" />
-            </button>
-          )}
-
-          {/* 迷你抽屉模式切换 */}
-          <button
-            onClick={onCollapseDashboard}
-            title="折叠为迷你抽屉模式"
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '4px 8px',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-            }}
-          >
-            <Minimize2 className="w-3 h-3" />
-            <span>迷你模式</span>
+      <DashboardChrome
+        theme={theme} onToggleTheme={onToggleTheme} activeTab={activeTab} onSelectTab={setActiveTab}
+        mock={status.is_mock} onToggleMaximize={handleToggleMaximize}
+        tabs={[
+          ...BUILTIN_MODULE_SLOTS.filter(slot => isSlotActive(slot, { status, isWaterCoolerEnabled, isCoolerConnected, moduleToggles, capabilities }))
+            .sort((a, b) => a.order - b.order).map(slot => ({
+              id: slot.id, name: slot.name, icon: <slot.icon size={14} className={slot.iconClass} />,
+              className: slot.tabClassName, badge: slot.renderBadge?.({ status, isWaterCoolerEnabled, isCoolerConnected }),
+            })),
+          ...tabPlugins.map(plugin => ({ id: plugin.id, name: plugin.name, icon: <Layers size={14} />,
+            className: 'tab-plugin-custom', description: plugin.description })),
+        ]}
+        actions={<>
+          {status.oem_installed && status.oem_running && <button className="toggle-btn btn-warning-solid"
+            onClick={() => void handleTakeoverOem()} disabled={isSwitchingService}>
+            {isSwitchingService ? <Loader2 size={11} className="animate-spin" /> : <Shield size={11} />}接管官方控制台
+          </button>}
+          <button className="toggle-btn" onClick={onCollapseDashboard} title="折叠为迷你抽屉模式"><Minimize2 size={12} />迷你模式</button>
+          <button className="toggle-btn" onClick={handleToggleMaximize} title={isMaximized ? '还原窗口' : '最大化'}>
+            {isMaximized ? <Copy size={12} /> : <Square size={12} />}{isMaximized ? '窗口' : '全屏'}
           </button>
-
-          {/* 窗口 / 全屏切换 */}
-          <button
-            onClick={handleToggleMaximize}
-            title={isMaximized ? '还原为 960×740 窗口模式' : '最大化全屏显示'}
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '4px 8px',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-            }}
-          >
-            {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
-            <span>{isMaximized ? '窗口' : '全屏'}</span>
-          </button>
-
-          <button
-            onClick={onMinimize}
-            title="最小化"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '4px',
-              borderRadius: '4px',
-            }}
-          >
-            <Minus className="w-4 h-4" />
-          </button>
-          <button
-            onClick={onClose}
-            title="关闭窗口"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '4px',
-              borderRadius: '4px',
-            }}
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Sub-Nav Pill Tabs Header: Single-line, Mouse Wheel Horizontal Scroll, Elegant (Plugin Slot Driven) */}
-      <div className="sub-nav-wrapper shell-navbar" data-slot="navbar">
-        {canScrollNavLeft && <div className="sub-nav-fade sub-nav-fade-left" />}
-        <div
-          ref={navBarRef}
-          className="sub-nav-bar"
-          onWheel={(e) => {
-            if (e.deltaY !== 0) {
-              e.currentTarget.scrollLeft += e.deltaY;
-            }
-          }}
-        >
-          {BUILTIN_MODULE_SLOTS.filter((slot) => isSlotActive(slot, { status, isWaterCoolerEnabled, isCoolerConnected, moduleToggles, capabilities }))
-            .sort((a, b) => a.order - b.order)
-            .map((slot) => {
-              const IconComponent = slot.icon;
-              const isActive = activeTab === slot.id;
-              return (
-                <button
-                  key={slot.id}
-                  onClick={() => setActiveTab(slot.id)}
-                  className={`nav-tab ${slot.tabClassName} ${isActive ? 'active' : ''}`}
-                >
-                  <IconComponent size={14} className={slot.iconClass || 'w-3.5 h-3.5'} />
-                  <span>{slot.name}</span>
-                  {slot.renderBadge && slot.renderBadge({ status, isWaterCoolerEnabled, isCoolerConnected })}
-                </button>
-              );
-            })}
-          {tabPlugins.map((plugin) => {
-            const isActive = activeTab === plugin.id;
-            return (
-              <button
-                key={plugin.id}
-                onClick={() => setActiveTab(plugin.id)}
-                className={`nav-tab tab-plugin-custom ${isActive ? 'active' : ''}`}
-                title={plugin.description}
-              >
-                <Layers size={14} className="w-3.5 h-3.5" />
-                <span>{plugin.name}</span>
-              </button>
-            );
-          })}
-        </div>
-        {canScrollNavRight && <div className="sub-nav-fade sub-nav-fade-right" />}
-      </div>
+          <button className="toggle-btn" onClick={onMinimize} title="最小化"><Minus size={16} /></button>
+          <button className="toggle-btn" onClick={onClose} title="关闭窗口"><X size={16} /></button>
+        </>}
+      />
 
       {/* Main Body Viewport Slot */}
       <div className="shell-viewport" data-slot="viewport">

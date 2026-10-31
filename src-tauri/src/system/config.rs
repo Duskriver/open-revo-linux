@@ -256,11 +256,7 @@ fn default_cpu_temp_target_max() -> u8 { 95 }
 fn default_cpu_pl4_margin() -> u16 { 20 }
 fn default_wake_window_mode() -> String { "remember".to_string() }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FanCurvePoint {
-    pub temp: u8,
-    pub duty: u8,
-}
+pub use openrevo_core::hal::fan_curve::FanCurvePoint;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CustomProfileConfig {

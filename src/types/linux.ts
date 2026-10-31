@@ -1,3 +1,4 @@
+import type { FanCurvePoint } from './hardware';
 export interface LinuxSensor {
   id: string;
   device: string;
@@ -49,4 +50,54 @@ export interface LinuxSnapshot {
     error: string | null;
   };
   capabilities: { id: string; name: string; available: boolean; detail: string }[];
+  oem: LinuxOemSnapshot;
+  controls: {
+    platform: { active: string | null; available: string[]; source: string | null; writable: boolean };
+    fans: LinuxFanControl[];
+    power_limits: LinuxPowerLimit[];
+    fan_error: string | null;
+  };
+}
+
+export interface LinuxFanControl {
+  id: string;
+  name: string;
+  rpm: number | null;
+  mode: number | null;
+  boosted: boolean;
+  writable: boolean;
+  reason: string | null;
+}
+
+export interface LinuxPowerLimit {
+  id: string;
+  name: string;
+  watts: number;
+  min_watts: number;
+  max_watts: number;
+  writable: boolean;
+  reason: string | null;
+}
+
+export interface CpuLimits { pl1: number; pl2: number; pl4: number }
+export interface LinuxOemSnapshot {
+  available: boolean;
+  writable: boolean;
+  error: string | null;
+  mode: number | null;
+  custom_power: boolean;
+  fan_boost: boolean;
+  fan_rpm: number[];
+  dc_jack: boolean;
+  presets: CpuLimits[];
+  limits: CpuLimits | null;
+  fan_curve: { supported: boolean; active: boolean; fault: boolean; applied: LinuxFanCurveConfig | null };
+}
+
+export interface LinuxFanCurveConfig {
+  cpu: FanCurvePoint[];
+  gpu: FanCurvePoint[];
+  isolated: boolean;
+  ramp_enabled: boolean;
+  ramp_ms: number;
 }

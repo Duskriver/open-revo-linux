@@ -101,7 +101,7 @@ pub fn apply_ec_hardware_mode(ui_mode: u8) {
             if wmi_ec::is_legacy_dual_mode_ec() {
                 wmi_ec::wmi_write_ec(wmi_ec::ADDR_FAN_BOOST_CLAMP, if fan_boost_active { 0x50 } else { 0x10 });
             } else {
-                let base_clamp = 0xA0;
+                let base_clamp = crate::hal::tongfang::mode_clamp(1).unwrap();
                 let val_clamp = if fan_boost_active { base_clamp | wmi_ec::FAN_BOOST_CLAMP_BIT } else { base_clamp };
                 wmi_ec::wmi_write_ec(wmi_ec::ADDR_FAN_BOOST_CLAMP, val_clamp);
             }
@@ -110,7 +110,7 @@ pub fn apply_ec_hardware_mode(ui_mode: u8) {
             set_ec_mode_index(0x00);
             // 2. Trigger Silent Mode via ADDR_TRIGGER_BYTE (preserve Bit 4 USB Charging)
             let cur_trig = wmi_ec::wmi_read_ec(wmi_ec::ADDR_TRIGGER_BYTE).unwrap_or(0);
-            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, (cur_trig & 0x10) | 0x28);
+            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, crate::hal::tongfang::mode_trigger(cur_trig, 1));
             // 3. Mark silent mode status
             wmi_ec::wmi_write_ec(wmi_ec::ADDR_TURBO_TRIGGER_1115, 1);
 
@@ -174,7 +174,7 @@ pub fn apply_ec_hardware_mode(ui_mode: u8) {
             if wmi_ec::is_legacy_dual_mode_ec() {
                 wmi_ec::wmi_write_ec(wmi_ec::ADDR_FAN_BOOST_CLAMP, if fan_boost_active { 0x50 } else { 0x10 });
             } else {
-                let base_clamp = 0x00;
+                let base_clamp = crate::hal::tongfang::mode_clamp(2).unwrap();
                 let val_clamp = if fan_boost_active { base_clamp | wmi_ec::FAN_BOOST_CLAMP_BIT } else { base_clamp };
                 wmi_ec::wmi_write_ec(wmi_ec::ADDR_FAN_BOOST_CLAMP, val_clamp);
             }
@@ -183,7 +183,7 @@ pub fn apply_ec_hardware_mode(ui_mode: u8) {
             set_ec_mode_index(0x00);
             // 2. Clear Trigger Byte (preserve Bit 4 USB Charging)
             let cur_trig = wmi_ec::wmi_read_ec(wmi_ec::ADDR_TRIGGER_BYTE).unwrap_or(0);
-            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, (cur_trig & 0x10) | 0x20);
+            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, crate::hal::tongfang::mode_trigger(cur_trig, 2));
             // 3. Clear silent mode status
             wmi_ec::wmi_write_ec(wmi_ec::ADDR_TURBO_TRIGGER_1115, 0);
 
@@ -248,7 +248,7 @@ pub fn apply_ec_hardware_mode(ui_mode: u8) {
             if wmi_ec::is_legacy_dual_mode_ec() {
                 wmi_ec::wmi_write_ec(wmi_ec::ADDR_FAN_BOOST_CLAMP, if fan_boost_active { 0x50 } else { 0x10 });
             } else {
-                let val_clamp = if fan_boost_active { 0x10 | wmi_ec::FAN_BOOST_CLAMP_BIT } else { 0x10 };
+                let val_clamp = crate::hal::tongfang::fan_boost_value(crate::hal::tongfang::mode_clamp(3).unwrap(), fan_boost_active);
                 wmi_ec::wmi_write_ec(wmi_ec::ADDR_FAN_BOOST_CLAMP, val_clamp);
             }
 
@@ -256,7 +256,7 @@ pub fn apply_ec_hardware_mode(ui_mode: u8) {
             set_ec_mode_index(0x10);
             // 2. Clear Trigger Byte (preserve Bit 4 USB Charging)
             let cur_trig = wmi_ec::wmi_read_ec(wmi_ec::ADDR_TRIGGER_BYTE).unwrap_or(0);
-            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, (cur_trig & 0x10) | 0x20);
+            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, crate::hal::tongfang::mode_trigger(cur_trig, 2));
             // 3. Clear silent mode status
             wmi_ec::wmi_write_ec(wmi_ec::ADDR_TURBO_TRIGGER_1115, 0);
 
@@ -460,7 +460,7 @@ pub fn apply_ec_hardware_mode(ui_mode: u8) {
             // 3. Hardware Trigger Latch: Assert Trigger Byte (preserve Bit 4 USB Charging)
             // Latch all CPU & GPU power/thermal configurations into EC/SMM state machine
             let cur_trig = wmi_ec::wmi_read_ec(wmi_ec::ADDR_TRIGGER_BYTE).unwrap_or(0);
-            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, (cur_trig & 0x10) | 0x20);
+            wmi_ec::wmi_write_ec(wmi_ec::ADDR_TRIGGER_BYTE, crate::hal::tongfang::mode_trigger(cur_trig, 2));
 
             // 4. Custom Mode Hardware Switch & Fan strategies / Sensitivity
             wmi_ec::set_custom_mode_ec(true);

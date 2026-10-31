@@ -1,5 +1,5 @@
 //! Linux Tauri host. The GUI runs as the desktop user, never as root.
-use openrevo_core::linux::{LinuxBackend, Snapshot};
+use openrevo_core::linux::{FanCurveConfig, LinuxBackend, Snapshot};
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -33,6 +33,60 @@ async fn set_linux_power_profile(
     state: State<'_, LinuxState>,
 ) -> Result<(), String> {
     with_backend(&state, move |backend| backend.set_power_profile(&profile)).await
+}
+
+#[tauri::command]
+async fn set_linux_platform_profile(
+    profile: String,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
+    with_backend(&state, move |backend| {
+        backend.set_platform_profile(&profile)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_linux_fan_boost(
+    id: String,
+    enabled: bool,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
+    with_backend(&state, move |backend| backend.set_fan_boost(&id, enabled)).await
+}
+
+#[tauri::command]
+async fn set_linux_power_limit(
+    id: String,
+    watts: f64,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
+    with_backend(&state, move |backend| backend.set_power_limit(&id, watts)).await
+}
+
+#[tauri::command]
+async fn set_linux_oem_mode(mode: u8, state: State<'_, LinuxState>) -> Result<(), String> {
+    with_backend(&state, move |backend| backend.set_oem_mode(mode)).await
+}
+
+#[tauri::command]
+async fn set_linux_oem_fan_boost(enabled: bool, state: State<'_, LinuxState>) -> Result<(), String> {
+    with_backend(&state, move |backend| backend.set_oem_fan_boost(enabled)).await
+}
+
+#[tauri::command]
+async fn set_linux_oem_cpu_limits(pl1: u8, pl2: u8, pl4: u8, state: State<'_, LinuxState>) -> Result<(), String> {
+    with_backend(&state, move |backend| backend.set_oem_cpu_limits(pl1, pl2, pl4)).await
+}
+
+#[tauri::command]
+async fn set_linux_oem_fan_curve(config: FanCurveConfig, state: State<'_, LinuxState>) -> Result<(), String> {
+    with_backend(&state, move |backend| backend.set_oem_fan_curve(config)).await
+}
+
+#[tauri::command]
+async fn restore_linux_oem_fan_curve(state: State<'_, LinuxState>) -> Result<(), String> {
+    with_backend(&state, |backend| backend.restore_oem_fan_curve()).await
 }
 
 #[tauri::command]
@@ -108,12 +162,27 @@ pub fn run() {
             crate::platform::get_platform,
             get_linux_status,
             set_linux_power_profile,
+            set_linux_platform_profile,
+            set_linux_fan_boost,
+            set_linux_power_limit,
+            set_linux_oem_mode,
+            set_linux_oem_fan_boost,
+            set_linux_oem_cpu_limits,
+            set_linux_oem_fan_curve,
+            restore_linux_oem_fan_curve,
             set_linux_battery_limit,
             set_linux_backlight,
             get_autostart_enabled,
             set_autostart_enabled
         ])
         .setup(|app| {
+            let backend = Arc::clone(app.state::<LinuxState>().inner());
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if let Ok(mut state) = backend.lock() {
+                    state.control_watchdog();
+                }
+            });
             let show = MenuItem::with_id(app, "show", "打开 OpenRevo", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -134,6 +203,18 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run OpenRevo for Linux");
+        .build(tauri::generate_context!())
+        .expect("failed to build OpenRevo for Linux")
+        .run(|app, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                if let Ok(mut state) = app.state::<LinuxState>().lock() {
+                    if let Err(error) = state.release_controls() {
+                        eprintln!("Could not restore automatic fan control: {error}");
+                    }
+                }
+            }
+        });
 }

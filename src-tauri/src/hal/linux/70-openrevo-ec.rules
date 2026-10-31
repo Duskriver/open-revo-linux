@@ -1,0 +1,2 @@
+# Only the active local desktop session receives device access.
+SUBSYSTEM=="misc", KERNEL=="openrevo_ec", MODE="0660", GROUP="root", TAG+="uaccess"

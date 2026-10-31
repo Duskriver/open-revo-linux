@@ -3,7 +3,6 @@
 //! telemetry, and power orchestration engine for Mechrevo laptops.
 
 pub mod event;
-#[cfg(windows)]
 pub mod hal;
 #[cfg(windows)]
 pub mod driver;

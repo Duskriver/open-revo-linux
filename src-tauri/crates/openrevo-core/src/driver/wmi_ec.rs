@@ -512,9 +512,9 @@ pub fn set_fan_boost_hardware(enable: bool) -> bool {
     } else {
         if let Some(mut val) = wmi_read_ec(ADDR_FAN_BOOST_CLAMP) {
             if enable {
-                val |= FAN_BOOST_CLAMP_BIT;
+                val = crate::hal::tongfang::fan_boost_value(val, true);
             } else {
-                val &= !FAN_BOOST_CLAMP_BIT;
+                val = crate::hal::tongfang::fan_boost_value(val, false);
             }
             wmi_write_ec(ADDR_FAN_BOOST_CLAMP, val);
         }
@@ -706,15 +706,7 @@ pub fn compute_safe_pl_limits(pl1: u16, pl2: u16, pl4: u16) -> (u8, u8, u8) {
 }
 
 pub fn compute_safe_pl_limits_with_margin(pl1: u16, pl2: u16, pl4: u16, margin: u16) -> (u8, u8, u8) {
-    let pl1_val = pl1.clamp(15, 255) as u8;
-    let pl2_val = pl2.clamp(pl1_val as u16, 255) as u8;
-    // INVIOLABLE HARDWARE RULE: PL4 is peak instantaneous current/wattage limit.
-    // PL4 MUST NEVER BE SMALLER THAN PL2 + margin!
-    // If PL4 is too close to PL2, transient microsecond spikes trip VRM hardware overcurrent (BD PROCHOT),
-    // immediately locking CPU to 0.54G~0.60G!
-    let min_pl4 = (pl2_val as u16 + margin).min(255);
-    let pl4_val = pl4.clamp(min_pl4, 255) as u8;
-    (pl1_val, pl2_val, pl4_val)
+    crate::hal::tongfang::safe_pl_limits(pl1, pl2, pl4, margin)
 }
 
 /// Apply Custom CPU Power Limits (PL1, PL2, PL4) in full mode initialization

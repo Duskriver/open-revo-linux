@@ -97,6 +97,12 @@ pub fn deobf_bytes(bytes: &[u8], key: u8) -> Vec<u8> {
                 }
                 code.push_str("}\n\n");
 
+                code.push_str("pub mod linux_fan {\n");
+                for (name, value) in val["linux_fan"].as_object().expect("Linux fan protocol missing") {
+                    code.push_str(&format!("    pub const {}: usize = {};\n", name, value.as_u64().expect("Invalid fan protocol constant")));
+                }
+                code.push_str("}\n\n");
+
                 // driver module
                 code.push_str("pub mod driver {\n    use super::*;\n\n");
                 let drv_path = "\\\\.\\ACPIDriver\0";
@@ -183,6 +189,9 @@ pub fn deobf_bytes(bytes: &[u8], key: u8) -> Vec<u8> {
     // =========================================================================
     // FALLBACK MODE: Public Open Source Safe Mock Vault
     // =========================================================================
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        panic!("Linux EC builds require a valid config/ec_registry.json; hardware constants cannot fall back to zero");
+    }
     let mut fallback = String::new();
     fallback.push_str("// Auto-generated Hardware Vault (Community Open-Source Mock Mode)\n");
     fallback.push_str("// Notice: config/ec_registry.json absent. Physical registers replaced with safe null-stubs.\n\n");

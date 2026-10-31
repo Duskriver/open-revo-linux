@@ -1,378 +1,81 @@
-import React from 'react';
-import { Cpu, Activity, Fan, Sparkles } from 'lucide-react';
+import { Activity, Cpu, Fan, Sparkles } from 'lucide-react';
+import { ReactNode } from 'react';
 import { HardwareState } from '../../types/hardware';
-import { PowerWattBadge } from '../tuning/HardwareTelemetryBar';
-
 import { ModelCapabilities } from '../../plugins/plugin_manifest';
 
-function formatCpuShort(brand?: string): string {
-  if (!brand) return 'CPU';
-  let s = brand
-    .replace(/\(R\)/gi, '')
-    .replace(/\(TM\)/gi, '')
-    .replace(/\bCPU\b/gi, '')
-    .replace(/\bProcessor\b/gi, '')
-    .trim();
-  s = s.replace(/\s+/g, ' ');
-  return s || 'CPU';
+export interface HardwareTelemetry {
+  cpuName?: string | null;
+  cpuTemp?: number | null;
+  cpuUsage?: number | null;
+  cpuFrequency?: number | null;
+  cpuPower?: number | null;
+  gpuName?: string | null;
+  gpuTemp?: number | null;
+  gpuUsage?: number | null;
+  gpuFrequency?: number | null;
+  gpuPower?: number | null;
+  fanRpm?: (number | null)[];
+  fanBoost?: boolean;
+  fanState?: string;
+  memoryLabel?: string;
+  memoryUsed?: number | null;
+  memoryTotal?: number | null;
+  memoryFrequency?: number | null;
 }
 
-function formatGpuShort(name?: string, isPureIgpu?: boolean): string {
-  if (!name || isPureIgpu) return isPureIgpu ? 'Core Graphics (iGPU)' : 'GPU';
-  let s = name
-    .replace(/NVIDIA\s+GeForce\s+/gi, '')
-    .replace(/\s+Laptop\s+GPU/gi, '')
-    .trim();
-  return s || 'GPU';
+const format = (n: number | null | undefined, digits = 0) =>
+  n == null || !Number.isFinite(n) ? '—' : n.toFixed(digits);
+
+function StatCard({ kind, title, icon, children, footer, usage }: {
+  kind: string; title: string; icon: ReactNode; children: ReactNode; footer: ReactNode; usage?: number | null;
+}) {
+  return <div className={`glass-card telemetry-card telemetry-card-${kind} shared-stat-card`} data-slot={kind}>
+    <div className="shared-stat-header"><span>{title}</span>{icon}</div>
+    <div className="shared-stat-readings">{children}</div>
+    <progress className="shared-stat-progress" max={100} value={usage == null ? 0 : Math.max(0, Math.min(100, usage))}
+      aria-label={`${title}负载`} aria-valuetext={usage == null ? '未提供' : `${usage.toFixed(0)}%`} />
+    <div className="shared-stat-footer">{footer}</div>
+  </div>;
 }
 
-interface HardwareStatCardsProps {
-  status: HardwareState;
-  capabilities?: ModelCapabilities;
+/** Both platforms supply measurements; unavailable values never become demo readings. */
+export function HardwareStatCards({ status, capabilities, telemetry }: {
+  status?: HardwareState; capabilities?: ModelCapabilities; telemetry?: HardwareTelemetry;
+}) {
+  const t: HardwareTelemetry = telemetry ?? {
+    cpuName: status?.cpu_name, cpuTemp: status?.cpu_temp, cpuUsage: status?.cpu_usage,
+    cpuFrequency: status?.cpu_freq, cpuPower: status?.cpu_power_w,
+    gpuName: status?.gpu_name, gpuTemp: status?.gpu_temp, gpuUsage: status?.gpu_usage,
+    gpuFrequency: status?.gpu_core_freq, gpuPower: status?.gpu_power_w,
+    fanRpm: [status?.cpu_fan_rpm ?? null, status?.gpu_fan_rpm ?? null], fanBoost: status?.fan_boost,
+    fanState: status?.fan_boost ? '一键强冷' : '自动温控',
+    memoryLabel: capabilities?.discrete_gpu === false ? 'UMA 共享显存' : 'VRAM 显存容量',
+    memoryUsed: status?.gpu_vram_used_mb == null ? null : status.gpu_vram_used_mb / 1024,
+    memoryTotal: status?.gpu_vram_mb == null ? null : status.gpu_vram_mb / 1024,
+    memoryFrequency: status?.gpu_mem_freq,
+  };
+  const memoryUsage = t.memoryUsed != null && t.memoryTotal ? t.memoryUsed / t.memoryTotal * 100 : null;
+  return <div className="telemetry-cards-grid" data-slot="telemetry-grid">
+    <StatCard kind="cpu" title="CPU 处理器状态" icon={<Cpu size={16} />} usage={t.cpuUsage}
+      footer={<><span title={t.cpuName ?? ''}>{t.cpuName ?? 'CPU 信息未提供'}</span><b>{format(t.cpuUsage)}%</b></>}>
+      <div><strong className={(t.cpuTemp ?? 0) > 85 ? 'shared-stat-hot' : ''}>{format(t.cpuTemp)}</strong><small>°C</small></div>
+      <div><b>{format(t.cpuFrequency)}</b><small>MHz</small></div>
+      <span className="shared-stat-power">{format(t.cpuPower, 1)} W</span>
+    </StatCard>
+    <StatCard kind="gpu" title="GPU 显卡状态" icon={<Activity size={16} />} usage={t.gpuUsage}
+      footer={<><span title={t.gpuName ?? ''}>{t.gpuName ?? 'GPU 信息未提供'}</span><b>{format(t.gpuUsage)}%</b></>}>
+      <div><strong className={(t.gpuTemp ?? 0) > 80 ? 'shared-stat-hot' : ''}>{format(t.gpuTemp)}</strong><small>°C</small></div>
+      <div><b>{format(t.gpuFrequency)}</b><small>MHz</small></div>
+      <span className="shared-stat-power">{format(t.gpuPower, 1)} W</span>
+    </StatCard>
+    <StatCard kind="fan" title="散热系统状态" icon={<Fan size={16} className={t.fanBoost ? 'animate-spin' : ''} />}
+      footer={<><span>风扇转速</span><b>{t.fanState ?? '状态未提供'}</b></>}>
+      {(t.fanRpm?.length ? t.fanRpm : [null, null]).map((rpm, i) =>
+        <div key={i}><small>风扇 {i + 1}</small><div><strong>{format(rpm)}</strong><small>RPM</small></div></div>)}
+    </StatCard>
+    <StatCard kind="vram" title={t.memoryLabel ?? '内存容量'} icon={<Sparkles size={16} />} usage={memoryUsage}
+      footer={<><span>{t.memoryFrequency == null ? '已用 / 总容量' : `${format(t.memoryFrequency)} MHz`}</span><b>{format(memoryUsage)}%</b></>}>
+      <div><strong>{format(t.memoryUsed, 1)}</strong><small>/ {format(t.memoryTotal, 1)} GiB</small></div>
+    </StatCard>
+  </div>;
 }
-
-export const HardwareStatCards: React.FC<HardwareStatCardsProps> = ({ status, capabilities }) => {
-  const isPureIgpu = capabilities ? capabilities.discrete_gpu === false : !status.gpu_name;
-
-  const isApuOrIgpu = isPureIgpu;
-
-  return (
-    <div className="telemetry-cards-grid" data-slot="telemetry-grid">
-      {/* 1. CPU Card */}
-      <div
-        className="glass-card telemetry-card telemetry-card-cpu"
-        data-slot="cpu"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '116px',
-          padding: '13px 14px',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', fontWeight: 600, color: '#a5b4fc', letterSpacing: '0.02em' }}>
-            CPU 处理器状态
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <PowerWattBadge watts={status.cpu_power_w} type="cpu" />
-            <Cpu className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-          </div>
-        </div>
-
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '8px 0 3px 0' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '24px', fontWeight: 800, color: status.cpu_temp > 85 ? '#f43f5e' : '#fff', lineHeight: 1 }}>
-                {status.cpu_temp > 0 ? status.cpu_temp : '--'}
-              </span>
-              <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>°C</span>
-            </div>
-
-            <div style={{ width: '1px', height: '18px', background: 'rgba(255, 255, 255, 0.1)', margin: '0 4px', alignSelf: 'center' }} />
-
-            <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '19px', fontWeight: 700, color: '#818cf8', lineHeight: 1 }}>
-                {status.cpu_freq > 0 ? status.cpu_freq : 2200}
-              </span>
-              <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>MHz</span>
-            </div>
-          </div>
-
-          {/* 负载细微进度条 */}
-          <div style={{ height: '3px', width: '100%', background: 'rgba(255, 255, 255, 0.07)', borderRadius: '2px', overflow: 'hidden', marginTop: '5px', marginBottom: '7px' }}>
-            <div
-              style={{
-                height: '100%',
-                borderRadius: '2px',
-                width: `${Math.min(100, Math.max(0, status.cpu_usage || 0))}%`,
-                background: 'linear-gradient(90deg, #6366f1, #818cf8)',
-              }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '10.5px', color: 'var(--text-dim)' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-            {formatCpuShort(status.cpu_name)}
-          </span>
-          <span
-            style={{
-              background: 'rgba(255, 255, 255, 0.07)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '11.5px',
-              fontWeight: 600,
-              color: '#e2e8f0',
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-            }}
-          >
-            {status.cpu_usage || 0}%
-          </span>
-        </div>
-      </div>
-
-      {/* 2. GPU Card */}
-      <div
-        className="glass-card telemetry-card telemetry-card-gpu"
-        data-slot="gpu"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '116px',
-          padding: '13px 14px',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', fontWeight: 600, color: isPureIgpu ? '#38bdf8' : '#6ee7b7', letterSpacing: '0.02em' }}>
-            {isPureIgpu ? 'GPU 集成核心' : 'GPU 独立显卡'}
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <PowerWattBadge watts={status.gpu_power_w} type="gpu" isApuOrIgpu={isApuOrIgpu} />
-            <Activity className={`w-4 h-4 ${isPureIgpu ? 'text-sky-400' : 'text-emerald-400'} flex-shrink-0`} />
-          </div>
-        </div>
-
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '8px 0 3px 0' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '24px', fontWeight: 800, color: status.gpu_temp > 80 ? '#f43f5e' : '#fff', lineHeight: 1 }}>
-                {status.gpu_temp > 0 ? status.gpu_temp : '--'}
-              </span>
-              <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>°C</span>
-            </div>
-
-            <div style={{ width: '1px', height: '18px', background: 'rgba(255, 255, 255, 0.1)', margin: '0 4px', alignSelf: 'center' }} />
-
-            <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '19px', fontWeight: 700, color: isPureIgpu ? '#38bdf8' : '#34d399', lineHeight: 1 }}>
-                {status.gpu_core_freq > 0 ? status.gpu_core_freq : '--'}
-              </span>
-              <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>MHz</span>
-            </div>
-          </div>
-
-          {/* 负载细微进度条 */}
-          <div style={{ height: '3px', width: '100%', background: 'rgba(255, 255, 255, 0.07)', borderRadius: '2px', overflow: 'hidden', marginTop: '5px', marginBottom: '7px' }}>
-            <div
-              style={{
-                height: '100%',
-                borderRadius: '2px',
-                width: `${Math.min(100, Math.max(0, status.gpu_usage || 0))}%`,
-                background: isPureIgpu ? 'linear-gradient(90deg, #0284c7, #38bdf8)' : 'linear-gradient(90deg, #10b981, #34d399)',
-              }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '10.5px', color: 'var(--text-dim)' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-            {formatGpuShort(status.gpu_name, isPureIgpu)}
-          </span>
-          <span
-            style={{
-              background: 'rgba(255, 255, 255, 0.07)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '11.5px',
-              fontWeight: 600,
-              color: '#e2e8f0',
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-            }}
-          >
-            {status.gpu_usage || 0}%
-          </span>
-        </div>
-      </div>
-
-      {/* 3. Fan RPM Card */}
-      <div
-        className="glass-card telemetry-card telemetry-card-fan"
-        data-slot="fan"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '116px',
-          padding: '13px 14px',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', fontWeight: 600, color: '#7dd3fc', letterSpacing: '0.02em' }}>
-            散热系统状态
-          </span>
-          <Fan className={`w-4 h-4 flex-shrink-0 ${status.fan_boost ? 'text-cyan-400 animate-spin' : 'text-slate-400'}`} />
-        </div>
-
-        <div>
-          {/* 单风扇 vs 双风扇自适应展示 */}
-          {status.gpu_fan_rpm > 0 || !isPureIgpu ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', margin: '6px 0 2px 0' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <span style={{ fontSize: '9.5px', color: 'var(--text-dim)', fontWeight: 600, letterSpacing: '0.03em' }}>
-                  {isPureIgpu ? '主散热扇' : 'CPU 扇'}
-                </span>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '18px', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'baseline' }}>
-                  <span>{status.cpu_fan_rpm > 0 ? status.cpu_fan_rpm : '--'}</span>
-                  <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>RPM</span>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', borderLeft: '1px solid rgba(255,255,255,0.08)', paddingLeft: '8px' }}>
-                <span style={{ fontSize: '9.5px', color: 'var(--text-dim)', fontWeight: 600, letterSpacing: '0.03em' }}>
-                  {isPureIgpu ? '副散热扇' : 'GPU 扇'}
-                </span>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '18px', fontWeight: 700, color: '#a5f3fc', display: 'flex', alignItems: 'baseline' }}>
-                  <span>{status.gpu_fan_rpm > 0 ? status.gpu_fan_rpm : '--'}</span>
-                  <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>RPM</span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ margin: '6px 0 2px 0' }}>
-              <span style={{ fontSize: '9.5px', color: 'var(--text-dim)', fontWeight: 600, letterSpacing: '0.03em' }}>
-                散热风扇
-              </span>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '20px', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'baseline' }}>
-                <span>{status.cpu_fan_rpm > 0 ? status.cpu_fan_rpm : '--'}</span>
-                <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '4px' }}>RPM</span>
-              </div>
-            </div>
-          )}
-
-          {/* 转速负荷细微进度条 */}
-          <div style={{ height: '3px', width: '100%', background: 'rgba(255, 255, 255, 0.07)', borderRadius: '2px', overflow: 'hidden', marginTop: '5px', marginBottom: '7px' }}>
-            <div
-              style={{
-                height: '100%',
-                borderRadius: '2px',
-                width: `${Math.min(100, Math.max(10, ((Math.max(status.cpu_fan_rpm, status.gpu_fan_rpm) || 1500) / 5000) * 100))}%`,
-                background: status.fan_boost ? 'linear-gradient(90deg, #06b6d4, #f43f5e)' : 'linear-gradient(90deg, #0284c7, #38bdf8)',
-              }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-dim)' }}>
-          <span>{isPureIgpu ? (status.gpu_fan_rpm > 0 ? '双涡轮高效散热' : '智能高效散热') : '双风扇散热'}</span>
-          <span
-            style={{
-              background: status.fan_boost ? 'rgba(244, 63, 94, 0.15)' : 'rgba(255, 255, 255, 0.07)',
-              border: status.fan_boost ? '1px solid rgba(244, 63, 94, 0.35)' : '1px solid rgba(255, 255, 255, 0.12)',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '11.5px',
-              fontWeight: 600,
-              color: status.fan_boost ? '#fb7185' : '#38bdf8',
-            }}
-          >
-            {status.fan_boost ? '一键强冷' : '自动温控'}
-          </span>
-        </div>
-      </div>
-
-      {/* 4. VRAM & Clocks Card */}
-      <div
-        className="glass-card telemetry-card telemetry-card-vram"
-        data-slot="vram"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          minHeight: '116px',
-          padding: '13px 14px',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', fontWeight: 600, color: '#d8b4fe', letterSpacing: '0.02em' }}>
-            {isPureIgpu ? 'UMA 共享显存' : 'VRAM 显存容量'}
-          </span>
-          <Sparkles className="w-4 h-4 text-purple-400 flex-shrink-0" />
-        </div>
-
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '8px 0 3px 0' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              {status.gpu_vram_mb > 0 && status.gpu_vram_mb < 1024 ? (
-                <>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '21px', fontWeight: 800, color: '#fff', lineHeight: 1 }}>
-                    {status.gpu_vram_used_mb > 0 ? status.gpu_vram_used_mb : 256}
-                  </span>
-                  <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>
-                    / {status.gpu_vram_mb} MB
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '21px', fontWeight: 800, color: '#fff', lineHeight: 1 }}>
-                    {status.gpu_vram_used_mb > 0 ? (status.gpu_vram_used_mb / 1024).toFixed(1) : '1.2'}
-                  </span>
-                  <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>
-                    / {status.gpu_vram_mb > 0
-                      ? (status.gpu_vram_mb % 1024 === 0
-                        ? `${Math.round(status.gpu_vram_mb / 1024)}`
-                        : (status.gpu_vram_mb / 1024).toFixed(1))
-                      : '16'} GB
-                  </span>
-                </>
-              )}
-            </div>
-
-            <div style={{ width: '1px', height: '18px', background: 'rgba(255, 255, 255, 0.1)', margin: '0 4px', alignSelf: 'center' }} />
-
-            <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '19px', fontWeight: 700, color: '#c084fc', lineHeight: 1 }}>
-                {status.gpu_mem_freq > 0 ? status.gpu_mem_freq : 405}
-              </span>
-              <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>MHz</span>
-            </div>
-          </div>
-
-          {/* 显存负载细微进度条 */}
-          <div style={{ height: '3px', width: '100%', background: 'rgba(255, 255, 255, 0.07)', borderRadius: '2px', overflow: 'hidden', marginTop: '5px', marginBottom: '7px' }}>
-            <div
-              style={{
-                height: '100%',
-                borderRadius: '2px',
-                width: `${status.gpu_vram_mb > 0 && status.gpu_vram_used_mb > 0 ? Math.min(100, Math.round((status.gpu_vram_used_mb / status.gpu_vram_mb) * 100)) : 8}%`,
-                background: 'linear-gradient(90deg, #9333ea, #c084fc)',
-              }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '10.5px', color: 'var(--text-dim)' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-            {!isPureIgpu
-              ? '专用显存 (VRAM)'
-              : '共享显存 (UMA)'}
-          </span>
-          <span
-            style={{
-              background: 'rgba(255, 255, 255, 0.07)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '11.5px',
-              fontWeight: 600,
-              color: '#e2e8f0',
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-            }}
-          >
-            {status.gpu_vram_mb > 0 && status.gpu_vram_used_mb > 0 ? Math.round((status.gpu_vram_used_mb / status.gpu_vram_mb) * 100) : 8}%
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-};

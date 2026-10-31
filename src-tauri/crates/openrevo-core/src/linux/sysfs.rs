@@ -103,6 +103,8 @@ impl Sysfs {
             backlights: self.backlights(),
             power: PowerProfiles::default(),
             capabilities: Vec::new(),
+            controls: Default::default(),
+            oem: Default::default(),
         }
     }
 

@@ -8,11 +8,27 @@
 
 include!(concat!(env!("OUT_DIR"), "/generated_vault.rs"));
 
+/// Modern Uniwill control values shared by the Windows and Linux transports.
+pub mod tongfang {
+    pub const OFFICE_CLAMP: u8 = 0xa0;
+    pub const BALANCED_CLAMP: u8 = 0x00;
+    pub const TURBO_CLAMP: u8 = 0x10;
+    pub const MODE_PRESERVE: u8 = 0xe1;
+    pub const MODE_TURBO: u8 = 0x10;
+    pub const AP_PRESENT: u8 = 0x01;
+    pub const CUSTOM_OFF: u8 = 0x40;
+    pub const CUSTOM_ON: u8 = 0x41;
+    pub const RAMP_SMOOTH: u8 = 0x83;
+    pub const FAN_ISOLATED: u8 = 0x80;
+    pub const PL4_MARGIN: u16 = 20;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::assertions_on_constants)] // Validate the build-generated vault, including fallback builds.
     fn test_vault_driver_path_and_ioctls() {
         if IS_PROPRIETARY_VAULT_LOADED {
             let path = driver::get_driver_path_null_terminated();

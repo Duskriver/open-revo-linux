@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Wind, Link2, Link2Off, Plus, Minus, Fan } from 'lucide-react';
+import React, { useRef, useState, useEffect, useId } from 'react';
+import { Wind, Link2, Link2Off, Plus, Minus, Fan, ChevronDown } from 'lucide-react';
 import { FanCurvePoint } from '../../types/hardware';
 import { RevSwitch } from '../ui/RevSwitch';
 
@@ -24,6 +24,7 @@ export interface FanCurveEditorProps {
   fanIndependentChannels?: boolean;
   supportFanRampRate?: boolean;
   minDuty?: number;
+  disabled?: boolean;
 }
 
 export const FanCurveEditor: React.FC<FanCurveEditorProps> = ({
@@ -47,7 +48,9 @@ export const FanCurveEditor: React.FC<FanCurveEditorProps> = ({
   fanIndependentChannels = true,
   supportFanRampRate = true,
   minDuty: propMinDuty,
+  disabled = false,
 }) => {
+  const gradientId = `fan-curve-${useId().replace(/:/g, '')}`;
   const minDuty = propMinDuty ?? (fanBoostMode === 'direct_rpm_clamp' ? 22 : 0);
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -106,7 +109,7 @@ export const FanCurveEditor: React.FC<FanCurveEditorProps> = ({
     repeatTimerRef.current = {};
   };
 
-  const isEditingAllowed = fanIndependentChannels ? fanIsolated : true;
+  const isEditingAllowed = !disabled && (fanIndependentChannels ? fanIsolated : true);
 
   const handleStepDuty = (index: number, delta: number) => {
     if (!isEditingAllowed) return;
@@ -119,19 +122,25 @@ export const FanCurveEditor: React.FC<FanCurveEditorProps> = ({
     }
   };
 
+  const stepRef = useRef(handleStepDuty);
+  stepRef.current = handleStepDuty;
+
   const startRepeat = (index: number, delta: number) => {
     if (!isEditingAllowed) return;
     stopRepeat();
     handleStepDuty(index, delta);
     repeatTimerRef.current.timeout = setTimeout(() => {
       repeatTimerRef.current.interval = setInterval(() => {
-        handleStepDuty(index, delta);
+        stepRef.current(index, delta);
       }, 50);
     }, 260);
   };
 
   useEffect(() => {
-    return () => stopRepeat();
+    window.addEventListener('pointerup', stopRepeat);
+    window.addEventListener('pointercancel', stopRepeat);
+    window.addEventListener('blur', stopRepeat);
+    return () => { stopRepeat(); window.removeEventListener('pointerup', stopRepeat); window.removeEventListener('pointercancel', stopRepeat); window.removeEventListener('blur', stopRepeat); };
   }, []);
 
   const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -171,459 +180,60 @@ export const FanCurveEditor: React.FC<FanCurveEditorProps> = ({
     ? `M ${startX},${floorY} L ${startX},${startY} L ${pointsStr} L ${endX},${endY} L ${endX},${floorY} Z`
     : '';
 
-  return (
-    <div className="tuning-card" style={{ height: '100%' }}>
-      {/* Title */}
-      <div className="tuning-header">
-        <div className="tuning-header-title" style={{ color: 'var(--color-brand)' }}>
-          <Wind className="w-4 h-4" />
-          <span>风扇策略与曲线</span>
-        </div>
-      </div>
-
-      {/* Single-row Physical Fan Boost Switch for BLD Direct Clamp only */}
-      {fanBoostMode === 'direct_rpm_clamp' && onToggleFanBoost && (
-        <div
-          className="tuning-sub-card"
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '6px 10px',
-            background: fanBoost ? 'var(--status-info-dim)' : undefined,
-            border: fanBoost ? '1px solid var(--status-info)' : undefined,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Fan className={`w-3.5 h-3.5 ${fanBoost ? 'animate-spin' : ''}`} style={{ color: fanBoost ? 'var(--status-info)' : 'var(--text-muted)' }} />
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '11px', whiteSpace: 'nowrap' }}>
-              硬件物理强锁 ({maxRpm} RPM)
-            </span>
-          </div>
-          <RevSwitch
-            checked={fanBoost}
-            onChange={() => onToggleFanBoost()}
-            size="sm"
-            activeColor="var(--status-info)"
-          />
-        </div>
-      )}
-
-      {/* Fan Ramp Rate (EC hardware slope ramp, Tongfang only) */}
-      {supportFanRampRate && (
-        <div
-          className="tuning-sub-card"
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '7px 10px',
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0 }}>平滑过渡</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <select
-              disabled={!fanRampRate}
-              value={fanRampSpeedMs}
-              onChange={(e) => onChangeFanRampSpeed(parseInt(e.target.value, 10))}
-              className="rev-select"
-              style={{
-                padding: '2px 8px',
-                color: fanRampRate ? 'var(--color-brand)' : 'var(--text-dim)',
-                cursor: fanRampRate ? 'pointer' : 'not-allowed',
-                minWidth: '68px',
-                textAlign: 'center',
-              }}
-            >
-              <option value="100">100ms</option>
-              <option value="300">300ms</option>
-              <option value="500">500ms</option>
-              <option value="1000">1000ms</option>
-            </select>
-            <RevSwitch
-              checked={fanRampRate}
-              onChange={onToggleFanRampRate}
-              size="sm"
-              activeColor="var(--color-brand)"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Fan Isolated Output (Only for models with independent fan hardware channels) */}
-      {fanIndependentChannels && (
-        <div
-          className="tuning-sub-card"
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '7px 10px',
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0 }}>风扇独立输出</div>
-          </div>
-          <RevSwitch
-            checked={fanIsolated}
-            onChange={onToggleFanIsolated}
-            size="sm"
-            activeColor="var(--color-brand)"
-          />
-        </div>
-      )}
-
-      {/* Custom Fan Curve Tab & Points */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px',
-          flex: 1,
-          marginTop: '2px',
-          borderTop: '1px solid var(--border-subtle)',
-          paddingTop: '8px',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          {fanIndependentChannels ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <button
-                type="button"
-                onClick={() => onTabChange('cpu')}
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '10px',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                  background: fanCurveTab === 'cpu' ? 'rgba(99, 102, 241, 0.35)' : 'transparent',
-                  color: fanCurveTab === 'cpu' ? 'var(--text-primary)' : 'var(--text-dim)',
-                  transition: 'all var(--transition-fast)',
-                }}
-              >
-                CPU风扇
-              </button>
-
-              {/* Sync Link Chain Button */}
-              <button
-                type="button"
-                onClick={() => onToggleFanCurveLinked && onToggleFanCurveLinked(!fanCurveLinked)}
-                style={{
-                  padding: '2px 5px',
-                  borderRadius: 'var(--radius-xs)',
-                  border: fanCurveLinked ? '1px solid var(--border-glow)' : '1px solid var(--border-subtle)',
-                  background: fanCurveLinked ? 'rgba(99, 102, 241, 0.25)' : 'var(--surface-badge)',
-                  color: fanCurveLinked ? 'var(--color-brand)' : 'var(--text-dim)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all var(--transition-fast)',
-                }}
-                title={fanCurveLinked ? '双风扇曲线已锁定联动（调节任意一侧将实时镜像同步）' : '双风扇独立调节（点击开启联动同步）'}
-              >
-                {fanCurveLinked ? <Link2 className="w-3 h-3" /> : <Link2Off className="w-3 h-3 opacity-60" />}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onTabChange('gpu')}
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '10px',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                  background: fanCurveTab === 'gpu' ? 'rgba(99, 102, 241, 0.35)' : 'transparent',
-                  color: fanCurveTab === 'gpu' ? 'var(--text-primary)' : 'var(--text-dim)',
-                  transition: 'all var(--transition-fast)',
-                }}
-              >
-                GPU风扇
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <Link2 className="w-3.5 h-3.5" style={{ color: 'var(--status-info)' }} />
-              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                双风扇联动
-              </span>
-            </div>
-          )}
-
-          <span style={{ fontSize: '10px', color: isEditingAllowed ? 'var(--color-brand)' : 'var(--text-dim)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-            {isEditingAllowed ? '● 8点曲线调校' : '○ 出厂预设托管'}
-          </span>
-        </div>
-
-        {/* Interactive SVG Fan Curve Chart (Taller by 50% for generous precision) */}
-        <div
-          style={{
-            background: 'var(--surface-sunken)',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--border-subtle)',
-            padding: '6px 8px',
-            userSelect: 'none',
-            touchAction: 'none',
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-          }}
-        >
-          <svg
-            ref={svgRef}
-            viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-            style={{ width: '100%', height: '280px', display: 'block', overflow: 'visible' }}
-            onPointerMove={handleSvgPointerMove}
-            onPointerUp={() => setDraggingIdx(null)}
-            onPointerLeave={() => setDraggingIdx(null)}
-          >
-            <defs>
-              <linearGradient id="fanCurveGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={isEditingAllowed ? '#6366f1' : '#64748b'} stopOpacity="0.45" />
-                <stop offset="100%" stopColor={isEditingAllowed ? '#6366f1' : '#64748b'} stopOpacity="0.02" />
-              </linearGradient>
-              <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor="#6366f1" floodOpacity="0.6" />
-              </filter>
-            </defs>
-
-            {/* Horizontal Grid & Labels */}
-            <line x1={PAD_L} y1={PAD_T} x2={endX} y2={PAD_T} stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" />
-            <text x={PAD_L - 4} y={PAD_T + 3} textAnchor="end" fontSize="9" fill="var(--text-dim)">100%</text>
-
-            <line x1={PAD_L} y1={PAD_T + PLOT_H * 0.25} x2={endX} y2={PAD_T + PLOT_H * 0.25} stroke="rgba(255,255,255,0.05)" strokeDasharray="2 2" />
-            <text x={PAD_L - 4} y={PAD_T + PLOT_H * 0.25 + 3} textAnchor="end" fontSize="8.5" fill="var(--text-dim)">75%</text>
-
-            <line x1={PAD_L} y1={PAD_T + PLOT_H * 0.5} x2={endX} y2={PAD_T + PLOT_H * 0.5} stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" />
-            <text x={PAD_L - 4} y={PAD_T + PLOT_H * 0.5 + 3} textAnchor="end" fontSize="9" fill="var(--text-dim)">50%</text>
-
-            <line x1={PAD_L} y1={PAD_T + PLOT_H * 0.75} x2={endX} y2={PAD_T + PLOT_H * 0.75} stroke="rgba(255,255,255,0.05)" strokeDasharray="2 2" />
-            <text x={PAD_L - 4} y={PAD_T + PLOT_H * 0.75 + 3} textAnchor="end" fontSize="8.5" fill="var(--text-dim)">25%</text>
-
-            <line x1={PAD_L} y1={floorY} x2={endX} y2={floorY} stroke="rgba(255,255,255,0.15)" />
-            <text x={PAD_L - 4} y={floorY + 3} textAnchor="end" fontSize="9" fill="var(--text-dim)">0%</text>
-
-            {/* Vertical Guide Lines & Temperature X Axis Labels for each node */}
-            {mappedPts.map((pt, idx) => (
-              <g key={`guide-${idx}`}>
-                <line
-                  x1={pt.x}
-                  y1={PAD_T}
-                  x2={pt.x}
-                  y2={floorY}
-                  stroke={draggingIdx === idx ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255,255,255,0.04)'}
-                  strokeDasharray="2 3"
-                />
-                <text
-                  x={pt.x}
-                  y={floorY + 14}
-                  textAnchor="middle"
-                  fontSize="8.5"
-                  fontWeight={draggingIdx === idx ? '700' : '500'}
-                  fill={draggingIdx === idx ? 'var(--color-brand)' : 'var(--text-dim)'}
-                >
-                  {pt.temp}°
-                </text>
-              </g>
-            ))}
-
-            {/* Area Fill */}
-            <path d={areaPath} fill="url(#fanCurveGrad)" />
-
-            {/* Curve Stroke */}
-            <path
-              d={linePath}
-              fill="none"
-              stroke={isEditingAllowed ? '#6366f1' : '#64748b'}
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              filter={isEditingAllowed ? 'url(#glow)' : undefined}
-            />
-
-            {/* 8 Anchor Points with direct drag, wheel scroll, & hover support */}
-            {mappedPts.map((pt, idx) => {
-              const isDragging = draggingIdx === idx;
-              return (
-                <g
-                  key={idx}
-                  style={{ cursor: isEditingAllowed ? 'ns-resize' : 'default' }}
-                  onPointerDown={(e) => {
-                    if (!isEditingAllowed) return;
-                    (e.target as Element).setPointerCapture(e.pointerId);
-                    setDraggingIdx(idx);
-                  }}
-                  onWheel={(e) => {
-                    if (!isEditingAllowed) return;
-                    e.preventDefault();
-                    handleStepDuty(idx, e.deltaY < 0 ? 1 : -1);
-                  }}
-                >
-                  {/* Invisible enlarged hit target */}
-                  <circle cx={pt.x} cy={pt.y} r={18} fill="transparent" />
-                  {/* Outer pulse circle */}
-                  <circle
-                    cx={pt.x}
-                    cy={pt.y}
-                    r={isDragging ? 12 : 7.5}
-                    fill={isEditingAllowed ? (isDragging ? 'rgba(244, 114, 182, 0.4)' : 'rgba(99, 102, 241, 0.3)') : 'rgba(100, 116, 139, 0.2)'}
-                    stroke={isEditingAllowed ? (isDragging ? '#f472b6' : '#6366f1') : '#64748b'}
-                    strokeWidth={isDragging ? 1.5 : 1}
-                  />
-                  {/* Core circle */}
-                  <circle
-                    cx={pt.x}
-                    cy={pt.y}
-                    r={isDragging ? 6.5 : 4.5}
-                    fill={isEditingAllowed ? (isDragging ? '#f472b6' : '#e0e7ff') : '#94a3b8'}
-                    stroke={isEditingAllowed ? '#4338ca' : '#334155'}
-                    strokeWidth="1.5"
-                  />
-                  {/* Duty Percentage Text Tag */}
-                  <text
-                    x={pt.x}
-                    y={pt.y - (isDragging ? 14 : 10)}
-                    textAnchor="middle"
-                    fontSize="9.5"
-                    fontWeight="800"
-                    fill={fanIsolated ? (isDragging ? '#f472b6' : '#e0e7ff') : 'var(--text-dim)'}
-                  >
-                    {pt.duty}%
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* 8-Node Fine-Tuning Grid (1% Step Controls with Fast Long-Press Repeat) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(8, 1fr)',
-            gap: '3px',
-            background: 'var(--surface-badge)',
-            borderRadius: 'var(--radius-sm)',
-            padding: '5px 3px',
-            border: '1px solid var(--border-subtle)',
-            marginTop: '2px',
-            userSelect: 'none',
-          }}
-        >
-          {pts.map((pt, idx) => (
-            <div
-              key={idx}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '2px',
-              }}
-            >
-              {/* [+] Step Button */}
-              <button
-                type="button"
-                disabled={!isEditingAllowed || pt.duty >= 100}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  startRepeat(idx, 1);
-                }}
-                onPointerUp={stopRepeat}
-                onPointerLeave={stopRepeat}
-                style={{
-                  width: '100%',
-                  maxWidth: '28px',
-                  height: '18px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 0,
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-xs)',
-                  color: isEditingAllowed ? 'var(--text-primary)' : 'var(--text-dim)',
-                  cursor: isEditingAllowed ? 'pointer' : 'not-allowed',
-                  transition: 'background var(--transition-fast)',
-                }}
-                title={`增加 1% (当前 ${pt.temp}°C: ${pt.duty}%)`}
-              >
-                <Plus className="w-2.5 h-2.5" />
-              </button>
-
-              {/* Duty Percentage */}
-              <div
-                style={{
-                  fontSize: '9.5px',
-                  fontWeight: 700,
-                  color: isEditingAllowed ? 'var(--color-brand)' : 'var(--text-dim)',
-                  lineHeight: '1.2',
-                }}
-              >
-                {pt.duty}%
-              </div>
-
-              {/* [-] Step Button */}
-              <button
-                type="button"
-                disabled={!isEditingAllowed || pt.duty <= minDuty}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  startRepeat(idx, -1);
-                }}
-                onPointerUp={stopRepeat}
-                onPointerLeave={stopRepeat}
-                style={{
-                  width: '100%',
-                  maxWidth: '28px',
-                  height: '18px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 0,
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-xs)',
-                  color: isEditingAllowed && pt.duty > minDuty ? 'var(--text-primary)' : 'var(--text-dim)',
-                  cursor: isEditingAllowed && pt.duty > minDuty ? 'pointer' : 'not-allowed',
-                  transition: 'background var(--transition-fast)',
-                }}
-                title={pt.duty <= minDuty ? `已达硬件起旋最低限制 (${minDuty}%)` : `减少 1% (当前 ${pt.temp}°C: ${pt.duty}%)`}
-              >
-                <Minus className="w-2.5 h-2.5" />
-              </button>
-
-              {/* Node Temperature Tag */}
-              <div style={{ fontSize: '8.5px', color: 'var(--text-dim)', marginTop: '1px' }}>
-                {pt.temp}°
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Compact Bottom Instruction Tag */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            fontSize: '9.5px',
-            color: 'var(--text-dim)',
-            padding: '2px 4px',
-          }}
-        >
-          <span>{minDuty > 0 ? `最低起旋 ${minDuty}% (2200 RPM) · 滚轮微调` : '鼠标悬停滚轮微调'}</span>
-          <span style={{ color: fanIsolated ? 'var(--color-brand)' : 'var(--text-dim)' }}>
-            8 节点单调递增
-          </span>
-        </div>
-      </div>
+  return <div className={`tuning-card shared-fan-editor ${isEditingAllowed ? 'editing' : ''}`}>
+    <div className="tuning-header"><div className="tuning-header-title"><Wind size={16} /><span>风扇策略与曲线</span></div></div>
+    {fanBoostMode === 'direct_rpm_clamp' && onToggleFanBoost && <div className="quick-row">
+      <span className="sys-row-label"><Fan size={14} />硬件物理强锁 ({maxRpm} RPM)</span>
+      <RevSwitch checked={fanBoost} disabled={disabled} onChange={() => onToggleFanBoost()} size="sm" />
+    </div>}
+    {supportFanRampRate && <div className="quick-row"><span className="sys-row-label">平滑过渡</span>
+      <div className="sys-row-controls"><span className="shared-fan-select"><select aria-label="风扇平滑过渡时间" className="rev-select" disabled={disabled || !fanRampRate}
+        value={fanRampSpeedMs} onChange={e => onChangeFanRampSpeed(Number(e.target.value))}>
+        {[100, 300, 500, 1000].map(ms => <option key={ms} value={ms}>{ms}ms</option>)}</select><ChevronDown size={12} aria-hidden="true" /></span>
+        <RevSwitch checked={fanRampRate} disabled={disabled} onChange={onToggleFanRampRate} size="sm" /></div>
+    </div>}
+    {fanIndependentChannels && <div className="quick-row"><span className="sys-row-label">风扇独立输出</span>
+      <RevSwitch checked={fanIsolated} disabled={disabled} onChange={onToggleFanIsolated} size="sm" /></div>}
+    <div className="shared-fan-body"><div className="shared-fan-toolbar">
+      {fanIndependentChannels ? <div className="shared-fan-tabs">
+        <button type="button" className={`toggle-btn ${fanCurveTab === 'cpu' ? 'active-indigo' : ''}`} disabled={disabled} onClick={() => onTabChange('cpu')}>CPU风扇</button>
+        {onToggleFanCurveLinked && <button type="button" className={`toggle-btn ${fanCurveLinked ? 'active-indigo' : ''}`} disabled={disabled}
+          aria-label="联动 CPU 和 GPU 曲线" aria-pressed={fanCurveLinked} title="双风扇曲线联动"
+          onClick={() => onToggleFanCurveLinked(!fanCurveLinked)}>{fanCurveLinked ? <Link2 size={14} /> : <Link2Off size={14} />}</button>}
+        <button type="button" className={`toggle-btn ${fanCurveTab === 'gpu' ? 'active-indigo' : ''}`} disabled={disabled} onClick={() => onTabChange('gpu')}>GPU风扇</button>
+      </div> : <span className="shared-fan-tabs"><Link2 size={14} />双风扇联动</span>}
+      <span className="shared-fan-state">{isEditingAllowed ? '● 8点曲线调校' : '○ 出厂预设托管'}</span>
     </div>
-  );
+    <div className="shared-fan-plot"><svg ref={svgRef} viewBox={`0 0 ${SVG_W} ${SVG_H}`} aria-label={`${fanCurveTab.toUpperCase()} 风扇曲线`}
+      onPointerMove={handleSvgPointerMove} onPointerUp={() => setDraggingIdx(null)} onPointerCancel={() => setDraggingIdx(null)}>
+      <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--fan-curve-accent)" stopOpacity="0.4" />
+        <stop offset="100%" stopColor="var(--fan-curve-accent)" stopOpacity="0.02" /></linearGradient></defs>
+      {[0, 25, 50, 75, 100].map(duty => <g key={duty}><line className="shared-fan-grid" x1={PAD_L} y1={getSvgY(duty)} x2={endX} y2={getSvgY(duty)} strokeDasharray="3 3" />
+        <text className="shared-fan-axis" x={PAD_L - 4} y={getSvgY(duty) + 3} textAnchor="end">{duty}%</text></g>)}
+      {mappedPts.map((pt, idx) => <g key={`guide-${idx}`}><line className="shared-fan-grid" x1={pt.x} y1={PAD_T} x2={pt.x} y2={floorY} strokeDasharray="2 3" />
+        <text className="shared-fan-axis" x={pt.x} y={floorY + 14} textAnchor="middle">{pt.temp}°</text></g>)}
+      <path d={areaPath} fill={`url(#${gradientId})`} /><path className="shared-fan-line" d={linePath} fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      {mappedPts.map((pt, idx) => <g key={idx} className={`shared-fan-node ${draggingIdx === idx ? 'dragging' : ''}`}
+        role="slider" tabIndex={isEditingAllowed ? 0 : -1} aria-label={`${fanCurveTab.toUpperCase()} ${pt.temp}°C 转速`}
+        aria-valuemin={minDuty} aria-valuemax={100} aria-valuenow={pt.duty} aria-disabled={!isEditingAllowed}
+        onPointerDown={e => { if (isEditingAllowed) { e.currentTarget.setPointerCapture(e.pointerId); setDraggingIdx(idx); } }}
+        onKeyDown={e => { if (['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); handleStepDuty(idx, ['ArrowUp', 'ArrowRight'].includes(e.key) ? 1 : -1); } }}
+        onWheel={e => { if (isEditingAllowed) { e.preventDefault(); handleStepDuty(idx, e.deltaY < 0 ? 1 : -1); } }}>
+        <circle cx={pt.x} cy={pt.y} r={18} fill="transparent" /><circle className="shared-fan-node-ring" cx={pt.x} cy={pt.y} r={draggingIdx === idx ? 12 : 7.5} />
+        <circle className="shared-fan-node-core" cx={pt.x} cy={pt.y} r={draggingIdx === idx ? 6.5 : 4.5} />
+        <text className="shared-fan-node-label" x={pt.x} y={pt.y - (draggingIdx === idx ? 14 : 10)} textAnchor="middle">{pt.duty}%</text>
+      </g>)}
+    </svg></div>
+    <div className="shared-fan-points">{pts.map((pt, idx) => <div key={idx} className="shared-fan-point">
+      <button type="button" className="toggle-btn" aria-label={`${fanCurveTab.toUpperCase()} ${pt.temp}°C 增加转速`}
+        disabled={!isEditingAllowed || pt.duty >= 100} onPointerDown={e => { e.preventDefault(); startRepeat(idx, 1); }}
+        onClick={e => { if (e.detail === 0) handleStepDuty(idx, 1); }} onPointerUp={stopRepeat} onPointerCancel={stopRepeat} onPointerLeave={stopRepeat} onBlur={stopRepeat}><Plus size={11} /></button>
+      <strong>{pt.duty}%</strong>
+      <button type="button" className="toggle-btn" aria-label={`${fanCurveTab.toUpperCase()} ${pt.temp}°C 减少转速`}
+        disabled={!isEditingAllowed || pt.duty <= minDuty} onPointerDown={e => { e.preventDefault(); startRepeat(idx, -1); }}
+        onClick={e => { if (e.detail === 0) handleStepDuty(idx, -1); }} onPointerUp={stopRepeat} onPointerCancel={stopRepeat} onPointerLeave={stopRepeat} onBlur={stopRepeat}><Minus size={11} /></button>
+      <span>{pt.temp}°</span></div>)}</div>
+    <div className="shared-fan-help"><span>{minDuty > 0 ? `最低 ${minDuty}% · 滚轮 / 方向键微调` : '滚轮 / 方向键微调'}</span><span>8 节点单调递增</span></div>
+    </div>
+  </div>;
 };

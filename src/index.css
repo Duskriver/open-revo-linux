@@ -3209,3 +3209,112 @@ body,
 .linux-footer label { display: flex; align-items: center; gap: 6px; }
 .linux-shell button:disabled { opacity: .4; cursor: not-allowed; }
 @media (max-width: 760px) { .linux-header { padding: 16px; } .linux-content { padding: 16px; } .linux-two-columns { grid-template-columns: 1fr; } .linux-capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Shared dashboard components: used by Windows and Linux. */
+:root {
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+}
+.shared-brand { display: flex; align-items: center; gap: var(--space-sm); }
+.shared-brand img { width: 22px; height: 22px; border-radius: var(--radius-xs); object-fit: contain; }
+.shared-brand-name { font-size: 15px; font-weight: 800; letter-spacing: .08em; }
+.shared-titlebar-drag { flex: 1; align-self: stretch; min-width: var(--space-lg); }
+.shared-titlebar-actions { display: flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; }
+.shared-titlebar-actions .toggle-btn { padding: var(--space-xs) var(--space-sm); font-size: 11px; }
+.shared-mock-badge { padding: var(--space-xs); border-radius: var(--radius-xs); color: var(--status-warn); background: var(--status-warn-dim); font-size: 9px; }
+.shared-mode-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-sm); }
+.shared-mode-grid.three-modes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.shared-mode-btn { position: relative; gap: var(--space-xs); }
+.shared-mode-btn:disabled { opacity: .45; cursor: not-allowed; }
+.shared-mode-btn.mode-office > svg { color: var(--color-office); }
+.shared-mode-btn.mode-balance > svg { color: var(--color-balance); }
+.shared-mode-btn.mode-beast > svg { color: var(--color-beast); }
+.shared-mode-btn.mode-custom > svg { color: var(--color-brand); }
+.shared-mode-tuning { position: absolute; top: var(--space-xs); right: var(--space-xs); display: flex; align-items: center; gap: var(--space-xs); padding: 1px var(--space-xs); font-size: 9px; border: 1px solid var(--border-highlight); border-radius: var(--radius-xs); background: var(--surface-badge); color: var(--text-primary); }
+.shared-stat-card { padding: var(--space-md); min-height: 132px; display: flex; flex-direction: column; gap: var(--space-sm); }
+.shared-stat-header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-xs); font-size: 11px; font-weight: 600; color: var(--stat-accent); }
+.shared-stat-card.telemetry-card-cpu { --stat-accent: var(--color-brand); }
+.shared-stat-card.telemetry-card-gpu { --stat-accent: var(--color-office); }
+.shared-stat-card.telemetry-card-fan { --stat-accent: var(--color-fan); }
+.shared-stat-card.telemetry-card-vram { --stat-accent: var(--color-balance); }
+.shared-stat-readings { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--space-xs); flex: 1; }
+.shared-stat-readings strong { font-family: var(--font-mono); font-size: 23px; color: var(--text-primary); }
+.shared-stat-readings .shared-stat-hot { color: var(--status-error); }
+.shared-stat-readings b { font-family: var(--font-mono); font-size: 17px; color: var(--stat-accent); }
+.shared-stat-readings small { font-size: 10px; color: var(--text-muted); margin-left: var(--space-xs); }
+.shared-stat-power { flex-basis: 100%; font-family: var(--font-mono); color: var(--stat-accent); font-size: 11px; }
+.shared-stat-progress { appearance: none; width: 100%; height: 3px; border: 0; border-radius: var(--radius-xs); background: var(--surface-pill); }
+.shared-stat-progress::-webkit-progress-bar { background: var(--surface-pill); border-radius: var(--radius-xs); }
+.shared-stat-progress::-webkit-progress-value { background: var(--stat-accent); border-radius: var(--radius-xs); }
+.shared-stat-progress::-moz-progress-bar { background: var(--stat-accent); border-radius: var(--radius-xs); }
+.shared-stat-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); color: var(--text-muted); font-size: 10px; }
+.shared-stat-footer > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.shared-stat-footer > b { flex-shrink: 0; color: var(--text-secondary); padding: var(--space-xs); border-radius: var(--radius-xs); background: var(--surface-badge); }
+.shared-slider-row.is-disabled { opacity: .45; }
+.shared-slider-row .tuning-row-label small { font-size: 10px; color: var(--text-dim); margin-left: var(--space-xs); font-weight: 400; }
+.shared-slider-value { display: flex; align-items: center; gap: var(--space-xs); font-size: 11px; color: var(--text-muted); }
+.shared-slider-value input { color: var(--slider-accent); }
+.shared-slider-row > input[type="range"] { width: 100%; accent-color: var(--slider-accent); height: 7px; margin: var(--space-xs) 0; }
+.shared-slider-row input:disabled { cursor: not-allowed; }
+.shared-slider-bounds { display: flex; align-items: center; gap: var(--space-xs); font-size: 10px; color: var(--text-dim); }
+.shared-slider-bounds > span:nth-child(2) { margin-left: auto; }
+.linux-page-stack { display: flex; flex-direction: column; gap: var(--space-lg); }
+.linux-control-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; font-size: 11px; }
+.linux-control-actions > span:first-child { margin-right: auto; }
+.linux-sensor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); }
+.linux-profile-options { display: block; }
+.linux-shell .quick-row { gap: var(--space-md); }
+.linux-shell .linux-two-columns { align-items: start; }
+.linux-shell .sys-row-desc { line-height: 1.6; }
+.linux-shell .linux-status { flex-wrap: wrap; }
+.linux-shell .linux-stack { min-width: 0; }
+.linux-shell select { color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-medium); border-radius: var(--radius-sm); padding: var(--space-xs); }
+[data-theme="mono"] .shared-stat-card { --stat-accent: var(--text-secondary); }
+[data-theme="mono"] .shared-mode-btn > svg { color: var(--text-secondary); }
+[data-theme="mono"] .shared-slider-row { --slider-accent: var(--text-primary) !important; }
+[data-theme="mono"] .shared-mock-badge { color: var(--text-primary); background: var(--surface-badge); }
+@media (max-width: 800px) {
+  .telemetry-cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "cpu gpu" "fan vram"; }
+  .linux-sensor-grid { grid-template-columns: 1fr; }
+  .shared-brand .badge-tag { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* Shared Windows/Linux fan editor. SVG geometry remains data-driven. */
+.shared-fan-editor { --fan-curve-accent: var(--text-muted); height: 100%; }
+.shared-fan-editor.editing { --fan-curve-accent: var(--color-brand); }
+.shared-fan-editor .tuning-header-title { color: var(--color-brand); }
+.shared-fan-editor .quick-row { padding: var(--space-sm); }
+.shared-fan-body { display: flex; flex-direction: column; gap: var(--space-sm); flex: 1; padding-top: var(--space-sm); border-top: 1px solid var(--border-subtle); }
+.shared-fan-toolbar, .shared-fan-help { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm); }
+.shared-fan-tabs { display: flex; align-items: center; gap: var(--space-xs); }
+.shared-fan-tabs .toggle-btn { font-size: 11px; padding: var(--space-xs) var(--space-sm); }
+.shared-fan-state, .shared-fan-help { color: var(--text-muted); font-size: 10px; }
+.shared-fan-plot { background: var(--surface-sunken); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-sm); user-select: none; touch-action: none; }
+.shared-fan-plot svg { display: block; width: 100%; height: 280px; overflow: visible; }
+.shared-fan-grid { stroke: var(--border-medium); }
+.shared-fan-axis { fill: var(--text-muted); font-size: 9px; }
+.shared-fan-line { stroke: var(--fan-curve-accent); }
+.shared-fan-node { cursor: default; outline: none; }
+.editing .shared-fan-node { cursor: ns-resize; }
+.shared-fan-node-ring { fill: var(--surface-card-active); stroke: var(--fan-curve-accent); }
+.shared-fan-node-core { fill: var(--text-primary); stroke: var(--fan-curve-accent); stroke-width: 1.5; }
+.shared-fan-node.dragging, .shared-fan-node:focus { --fan-curve-accent: var(--status-info); }
+.shared-fan-node:focus .shared-fan-node-ring { stroke-width: 3; }
+.shared-fan-node-label { fill: var(--text-primary); font-size: 9.5px; font-weight: 700; }
+.shared-fan-points { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: var(--space-xs); background: var(--surface-badge); padding: var(--space-xs); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.shared-fan-point { display: flex; flex-direction: column; align-items: center; gap: var(--space-xs); font-size: 10px; color: var(--text-muted); }
+.shared-fan-point strong { color: var(--fan-curve-accent); }
+.shared-fan-point .toggle-btn { min-width: 0; width: 100%; max-width: 30px; padding: var(--space-xs); justify-content: center; }
+.linux-fan-curve-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: var(--space-md); }
+.linux-fan-curve-panel > * { min-width: 0; }
+@media (max-width: 800px) { .linux-fan-curve-panel { grid-template-columns: minmax(0, 1fr); } }
+[data-theme="mono"] .shared-fan-editor.editing { --fan-curve-accent: var(--text-primary); }
+[data-theme="mono"] .shared-fan-point strong { color: var(--text-primary); }
+@media (max-width: 600px) { .shared-fan-toolbar, .shared-fan-help { flex-wrap: wrap; } }
+
+.shared-fan-select { position: relative; display: inline-flex; align-items: center; }
+.shared-fan-select > svg { position: absolute; right: var(--space-xs); pointer-events: none; color: var(--text-muted); }
+.shared-fan-editor .shared-fan-select select { appearance: none; -webkit-appearance: none; color-scheme: dark; background: var(--surface-overlay); color: var(--text-primary); padding-right: calc(var(--space-lg) + var(--space-xs)); }
+[data-theme="mono"] .shared-fan-editor .tuning-header-title { color: var(--text-primary); }

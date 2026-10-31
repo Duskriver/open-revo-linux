@@ -1,8 +1,12 @@
-//! Native Linux backend. Read telemetry through documented kernel interfaces;
-//! route power policy through the desktop's existing power-profiles service.
+//! Native Linux backend: standard kernel telemetry, system power policy, and
+//! the model-verified Uniwill WMI transport for original OEM controls.
 //! Missing measurements stay `None` and never fall back to simulated hardware.
+mod controls;
+pub use crate::hal::fan_curve::FanCurveConfig;
+use crate::hal::linux_ec::{LinuxEc, CpuLimits, OemSnapshot};
 mod power;
 mod sysfs;
+pub use controls::{ControlsSnapshot, FanControl, PlatformProfile, PowerLimit};
 
 use serde::Serialize;
 use std::path::PathBuf;
@@ -74,12 +78,16 @@ pub struct Snapshot {
     pub backlights: Vec<Backlight>,
     pub power: PowerProfiles,
     pub capabilities: Vec<Capability>,
+    pub controls: ControlsSnapshot,
+    pub oem: OemSnapshot,
 }
 
 pub struct LinuxBackend {
     sysfs: sysfs::Sysfs,
     power: power::PowerService,
     previous_cpu: Option<(u64, u64)>,
+    controls: controls::Controls,
+    oem: LinuxEc,
 }
 
 impl Default for LinuxBackend {
@@ -94,18 +102,91 @@ impl LinuxBackend {
             sysfs: sysfs::Sysfs::new(PathBuf::from("/sys"), PathBuf::from("/proc")),
             power: power::PowerService::new(),
             previous_cpu: None,
+            oem: LinuxEc::default(),
+            controls: controls::Controls::new(PathBuf::from("/sys")),
         }
     }
 
     pub fn snapshot(&mut self) -> Snapshot {
         let mut snapshot = self.sysfs.snapshot(&mut self.previous_cpu);
         snapshot.power = self.power.snapshot();
+        self.controls.heartbeat();
+        snapshot.controls = self.controls.snapshot();
+        snapshot.oem = self.oem.snapshot();
         snapshot.capabilities = capabilities(&snapshot);
         snapshot
     }
 
     pub fn set_power_profile(&mut self, profile: &str) -> Result<(), String> {
         self.power.set(profile)
+    }
+
+    pub fn set_platform_profile(&mut self, profile: &str) -> Result<(), String> {
+        if !self
+            .controls
+            .platform()
+            .available
+            .iter()
+            .any(|p| p == profile)
+        {
+            return Err("内核未提供此平台性能模式".into());
+        }
+        let power = self.power.snapshot();
+        if !power.available.is_empty() {
+            // Keep the desktop service as the sole policy owner when present.
+            let system_profile = match profile {
+                "low-power" => "power-saver",
+                "balanced" => "balanced",
+                "performance" => "performance",
+                _ => return Err("系统电源服务正在管理平台模式，无法独立切换此档位".into()),
+            };
+            self.power.set(system_profile)?;
+            self.controls.verify_platform(profile)
+        } else {
+            self.controls.set_platform(profile)
+        }
+    }
+
+    pub fn set_fan_boost(&mut self, id: &str, enabled: bool) -> Result<(), String> {
+        self.controls.set_fan_boost(id, enabled)
+    }
+
+    pub fn set_power_limit(&self, id: &str, watts: f64) -> Result<(), String> {
+        self.controls.set_power_limit(id, watts)
+    }
+
+    pub fn control_watchdog(&mut self) {
+        self.controls.watchdog();
+        self.oem.watchdog();
+    }
+
+    pub fn release_controls(&mut self) -> Result<(), String> {
+        let generic = self.controls.restore_fans();
+        let oem = self.oem.release();
+        generic.and(oem)
+    }
+
+    pub fn set_oem_mode(&mut self, mode: u8) -> Result<(), String> {
+        let ac = self.sysfs.snapshot(&mut self.previous_cpu).ac_online == Some(true);
+        self.oem.mode(mode, ac)
+    }
+
+    pub fn set_oem_fan_boost(&mut self, enabled: bool) -> Result<(), String> {
+        self.oem.boost(enabled)
+    }
+
+    pub fn set_oem_fan_curve(&mut self, config: FanCurveConfig) -> Result<(), String> {
+        let ac = self.sysfs.snapshot(&mut self.previous_cpu).ac_online == Some(true);
+        self.oem.apply_curve(config, ac)
+    }
+
+    pub fn restore_oem_fan_curve(&mut self) -> Result<(), String> {
+        self.oem.restore_curve()
+    }
+
+    pub fn set_oem_cpu_limits(&mut self, pl1: u8, pl2: u8, pl4: u8) -> Result<(), String> {
+        let ac = self.sysfs.snapshot(&mut self.previous_cpu).ac_online == Some(true);
+        self.oem.power(CpuLimits {pl1, pl2, pl4}, ac)
     }
 
     pub fn set_battery_limit(&self, battery: &str, limit: u8) -> Result<(), String> {
@@ -146,8 +227,8 @@ fn capabilities(s: &Snapshot) -> Vec<Capability> {
         cap(
             "fan_rpm",
             "风扇转速读取",
-            s.sensors.iter().any(|sensor| sensor.kind == "fan"),
-            "需要内核 hwmon 提供风扇转速接口".into(),
+            s.oem.available || s.sensors.iter().any(|sensor| sensor.kind == "fan"),
+            "读取 Uniwill EC 或内核 hwmon 风扇转速".into(),
         ),
         cap(
             "battery",
@@ -163,15 +244,31 @@ fn capabilities(s: &Snapshot) -> Vec<Capability> {
         ),
         cap(
             "fan_control",
-            "自定义风扇与强冷",
-            false,
-            "尚未移植机型专用风扇协议；当前由固件管理散热".into(),
+            "风扇强冷 / 自动调速",
+            s.oem.available || !s.controls.fans.is_empty(),
+            "Uniwill EC / hwmon 强冷与自动模式恢复；原版 8 点曲线通过整表写入，退出后恢复原策略".into(),
+        ),
+        cap(
+            "platform_profile",
+            "平台性能模式",
+            !s.controls.platform.available.is_empty(),
+            s.controls
+                .platform
+                .source
+                .clone()
+                .unwrap_or_else(|| "内核未公开平台性能接口".into()),
+        ),
+        cap(
+            "power_limits",
+            "硬件功耗上限",
+            s.oem.available || !s.controls.power_limits.is_empty(),
+            "读取 EC 出厂功耗表或 powercap / hwmon，写入后读回确认".into(),
         ),
         cap(
             "oem_mode",
-            "机身性能键 / OEM 模式灯",
-            false,
-            "系统性能档位与机身 EC 档位是不同接口，尚未接入 EC 联动".into(),
+            "机身性能模式",
+            s.oem.available,
+            s.oem.error.clone().unwrap_or_else(|| "Uniwill EC 原生模式控制，读取机身档位".into()),
         ),
         cap(
             "rgb",
