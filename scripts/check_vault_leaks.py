@@ -7,6 +7,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = ("src", "src-tauri/src", "src-tauri/crates/openrevo-core/src")
+HAL_ROOTS = ("src-tauri/src/hal/", "src-tauri/crates/openrevo-core/src/hal/")
 NUMBER = re.compile(
     r"(?<![\w.])(?:0[xX][0-9a-fA-F_]+|[0-9][0-9_]*)(?:u(?:8|16|32|64|size)|i(?:8|16|32|64|size))?(?![\w.])"
 )
@@ -73,7 +74,7 @@ def main():
             if path.suffix not in {".rs", ".ts", ".tsx", ".js", ".jsx"}:
                 continue
             relative = path.relative_to(ROOT)
-            if "hal" in path.relative_to(ROOT / source_root).parts:
+            if relative.as_posix().startswith(HAL_ROOTS):
                 continue
             count += 1
             for line, reason in scan_text(path.read_text(encoding="utf-8"), registry):

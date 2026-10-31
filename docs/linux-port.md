@@ -95,6 +95,12 @@ xvfb-run -a python3 tests/linux_webdriver.py
 
 测试截图输出到被 Git 忽略的 `test-results/linux-window.png`。本次实机环境为 GM5HG7A、Ryzen 7 8845H、Ubuntu 26.04.1、内核 7.0.0-38-generic。
 
+## Fork 开发与发布
+
+本仓库在 `main` 开发，以 Linux 专用标签 `v<版本号>-linux.<序号>` 发布预览版。`origin` 指向自己的 Fork，`upstream` 指向原作者仓库。同步上游前先提交本地修改，再获取并审查上游变化。
+
+发布前将 `src-tauri/tauri.linux.conf.json` 的 `version` 设置为与标签一致的语义版本（不含前缀 `v`）。推送对应标签后，Linux 发布流程会校验版本，运行 Linux 测试与打包、Windows 编译检查，并创建包含 `.deb`、源码归档和 SHA-256 校验的 **Release 草稿**。检查草稿后再公开发布。上游 Windows 发布与 Gitee 镜像任务只允许在原作者仓库运行。
+
 ## 后续硬件移植边界
 
 | Windows 依赖 | Linux 对应工作 | 状态 |

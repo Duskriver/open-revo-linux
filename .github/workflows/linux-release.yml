@@ -1,0 +1,84 @@
+name: Linux preview release
+
+on:
+  push:
+    tags:
+      - 'v*-linux.*'
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Linux tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          base = json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          linux = json.loads(Path('src-tauri/tauri.linux.conf.json').read_text())
+          version = linux.get('version', base['version'])
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag and Linux package version differ'
+          assert '-linux.' in version, 'Expected a Linux preview version'
+          PY
+
+  build:
+    needs: version
+    uses: ./.github/workflows/linux.yml
+
+  draft:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: openrevo-linux-x86_64
+          path: dist_release/ci
+      - name: Prepare packages, source and checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          root = Path('dist_release')
+          tag = os.environ['RELEASE_TAG']
+          debs = list((root / 'ci').rglob('*.deb'))
+          assert len(debs) == 1, 'Expected exactly one Debian package'
+          package = root / debs[0].name
+          shutil.copy2(debs[0], package)
+          source = root / f'OpenRevo-{tag}-source.tar.gz'
+          subprocess.run(['git', 'archive', '--format=tar.gz',
+                          f'--prefix=open-revo-linux-{tag}/',
+                          f'--output={source}', 'HEAD'], check=True)
+          files = (package, source)
+          (root / 'SHA256SUMS').write_text(''.join(
+              f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n' for path in files
+          ))
+          PY
+      - name: Create preview draft
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OpenRevo for Linux ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          body_path: docs/linux-release-notes.md
+          files: |
+            dist_release/*.deb
+            dist_release/*-source.tar.gz
+            dist_release/SHA256SUMS
