@@ -6,6 +6,9 @@ license = "GPL-3.0-or-later"
 edition = "2021"
 default-run = "open-revo"
 
+[features]
+windows-probes = []
+
 [lib]
 name = "open_revo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -66,6 +69,26 @@ windows = { version = "0.58", features = [
 [[bin]]
 name = "open-revo"
 path = "src/main.rs"
+
+[[bin]]
+name = "ble_probe"
+path = "src/bin/ble_probe.rs"
+required-features = ["windows-probes"]
+
+[[bin]]
+name = "hardware_probe"
+path = "src/bin/hardware_probe.rs"
+required-features = ["windows-probes"]
+
+[[bin]]
+name = "lighting_probe"
+path = "src/bin/lighting_probe.rs"
+required-features = ["windows-probes"]
+
+[[bin]]
+name = "streamer_probe"
+path = "src/bin/streamer_probe.rs"
+required-features = ["windows-probes"]
 
 [profile.release]
 opt-level = "z"

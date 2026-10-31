@@ -48,6 +48,24 @@ jobs:
         run: dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
       - name: Build Debian package
         run: pnpm linux:build
+      - name: Verify Debian package contents
+        run: |
+          python3 - <<'PY'
+          import io
+          import json
+          from pathlib import Path
+          import subprocess
+          import tarfile
+          version = json.loads(Path('src-tauri/tauri.linux.conf.json').read_text())['version']
+          package = Path(f'src-tauri/target/release/bundle/deb/OpenRevo_{version}_amd64.deb')
+          actual = subprocess.check_output(['dpkg-deb', '--field', str(package), 'Version'], text=True).strip()
+          assert actual == version, f'Unexpected package version: {actual}'
+          data = subprocess.check_output(['dpkg-deb', '--fsys-tarfile', str(package)])
+          with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+              binaries = [m.name.lstrip('./') for m in archive if m.isfile() and m.name.lstrip('./').startswith('usr/bin/')]
+          assert binaries == ['usr/bin/open-revo'], f'Unexpected packaged binaries: {binaries}'
+          print(f'Verified {package.name}: only the Linux main executable is installed')
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: openrevo-linux-x86_64
@@ -79,4 +97,4 @@ jobs:
           workspaces: src-tauri -> target
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets --all-features --locked

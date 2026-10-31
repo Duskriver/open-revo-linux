@@ -58,6 +58,8 @@ pnpm linux:build
 cargo run --manifest-path src-tauri/Cargo.toml -p openrevo-core --bin openrevo-probe
 ```
 
+原有 Windows 开发探针不随 Linux 安装包分发。在 Windows 上运行这些工具时，显式启用 `windows-probes`，例如 `cargo run --manifest-path src-tauri/Cargo.toml --features windows-probes --bin hardware_probe`。
+
 已构建的主程序也支持：
 
 ```sh
