@@ -1,6 +1,8 @@
+#[cfg(windows)]
+mod windows_probe {
 use open_revo_lib::driver::ite_lighting::IteLightingManager;
 
-fn main() {
+pub fn main() {
     println!("============================================================");
     println!("     OpenRevo ITE RGB Lighting Native HID Hardware Probe    ");
     println!("============================================================");
@@ -23,4 +25,18 @@ fn main() {
 
     println!("============================================================");
     println!("Probe finished.");
+}
+
+}
+
+#[cfg(windows)]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    windows_probe::main();
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("This diagnostic tool is only available on Windows. Use openrevo-probe on Linux.");
+    std::process::exit(1);
 }

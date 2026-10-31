@@ -1,10 +1,12 @@
+#[cfg(windows)]
+mod windows_probe {
 use windows::core::GUID;
 use windows::Devices::Bluetooth::{BluetoothCacheMode, BluetoothLEDevice};
 
 const NUS_SERVICE_UUID: GUID = GUID::from_u128(0x6e400001_b5a3_f393_e0a9_e50e24dcca9e);
 const WATER_COOLER_MAC: u64 = 0xcacbc3029718;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== OpenRevo Native BLE Water Cooler Probe ===");
     println!("Resolving device CA:CB:C3:02:97:18...");
 
@@ -42,4 +44,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+}
+
+#[cfg(windows)]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    windows_probe::main()?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("This diagnostic tool is only available on Windows. Use openrevo-probe on Linux.");
+    std::process::exit(1);
 }

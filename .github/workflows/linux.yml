@@ -1,0 +1,81 @@
+name: Linux port
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify hardware vault boundary
+        run: python3 scripts/check_vault_leaks.py
+      - name: Test hardware vault gate
+        run: python3 -m unittest discover -s tests -p 'test_vault_gate.py' -v
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm linux:check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml -p openrevo-core --all-targets -- -D warnings
+      - name: Build native test application
+        run: pnpm tauri build --debug --no-bundle
+      - name: Install Tauri WebDriver
+        run: cargo install tauri-driver --locked
+      - name: Test native window
+        run: dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
+      - name: Build Debian package
+        run: pnpm linux:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openrevo-linux-x86_64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/open-revo
+            test-results/linux-window.png
+
+  windows-check:
+    name: Windows compile regression
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify hardware vault boundary
+        shell: pwsh
+        run: ./scripts/check_vault_leaks.ps1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked

@@ -397,8 +397,8 @@ pub fn is_fan_boost_active() -> bool {
             .unwrap_or(false);
 
     if is_tongfang_hardware {
-        let s1873 = wmi_read_ec(ADDR_FAN_BOOST_CLAMP).unwrap_or(0);
-        return (s1873 & FAN_BOOST_CLAMP_BIT) != 0;
+        let fan_boost_status = wmi_read_ec(ADDR_FAN_BOOST_CLAMP).unwrap_or(0);
+        return (fan_boost_status & FAN_BOOST_CLAMP_BIT) != 0;
     }
 
     let is_bld = crate::hal::declarative::load_matched_manifest()

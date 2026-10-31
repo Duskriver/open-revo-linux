@@ -1,3 +1,5 @@
+#[cfg(windows)]
+mod windows_probe {
 use std::ffi::c_void;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -122,7 +124,7 @@ fn write_feature(h: HANDLE, report: &[u8], feat_len: usize) -> bool {
     ok != 0
 }
 
-fn main() {
+pub fn main() {
     println!("=================================================================");
     println!("   OpenRevo - BetterRGB ITE 8291 Standalone Minimal Diagnostic   ");
     println!("=================================================================");
@@ -327,4 +329,18 @@ fn main() {
         CloseHandle(best_handle);
     }
     println!("Diagnostic finished. If keyboard illuminated with fluid rainbow wave, our Rust driver is 100% functional!");
+}
+
+}
+
+#[cfg(windows)]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    windows_probe::main();
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("This diagnostic tool is only available on Windows. Use openrevo-probe on Linux.");
+    std::process::exit(1);
 }

@@ -3,7 +3,7 @@
 // Inviolable Rules:
 // 1. ADDR_TGP_OFFSET MUST be 0x00 (Fixed Base TGP, zero cTGP offset)
 // 2. ADDR_DB_FLAG1 MUST be 0xFF (Handshake kept alive, NEVER write 0x00!)
-// 3. Strictly BANNED from writing mirror registers (1988, 2004, 2005)
+// 3. Strictly BANNED from writing mirror registers outside the declared GPU power contract
 // 4. Super Performance (ADDR_FAN_BOOST_CLAMP Bit 4) is mutually exclusive with manual DB tuning:
 //    - When Super Performance is ON, hardware clamps DB to 25W (175W total)
 //    - When manually tuning DB (presets, sliders, step), automatically clear SuperPerf bit to ungate firmware

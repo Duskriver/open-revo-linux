@@ -4,9 +4,9 @@
   "version": "0.9.3",
   "identifier": "com.openrevo.controlcenter",
   "build": {
-    "beforeDevCommand": "pnpm.cmd dev",
+    "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm.cmd build",
+    "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {

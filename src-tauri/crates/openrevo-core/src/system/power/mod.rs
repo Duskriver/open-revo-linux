@@ -305,7 +305,7 @@ pub fn spawn_hardware_state_restore(ec_for_restore: crate::driver::ec_bridge::Sh
             let ec = ec_for_restore.lock();
             ec.set_power_mode(effective_power_mode);
 
-            // Legacy residual cleanup: earlier builds wrote 0x0770=4 or 0x0770=5 (ADDR_BATTERY_PLATFORM_OVERRIDE)
+            // Legacy residual cleanup: earlier builds wrote unsupported values to ADDR_BATTERY_PLATFORM_OVERRIDE.
             // which breaks Fn keys on gaming laptops. The new Platform4-Gate method no longer uses this register.
             // Auto-detect and neutralize stale values from old installs before applying the battery limit.
             if let Some(override_val) = crate::driver::wmi_ec::wmi_read_ec(crate::driver::wmi_ec::ADDR_BATTERY_PLATFORM_OVERRIDE) {

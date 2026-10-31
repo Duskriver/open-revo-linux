@@ -1,8 +1,10 @@
+#[cfg(windows)]
+mod windows_probe {
 use open_revo_lib::driver::ec_bridge::EcBridge;
 use open_revo_lib::driver::gpu_bridge::GpuBridge;
 use std::env;
 
-fn main() {
+pub fn main() {
     println!("============================================================");
     println!("       OpenRevo Hardware Probe & Diagnostic Tool            ");
     println!("============================================================");
@@ -126,3 +128,17 @@ fn main() {
     println!("============================================================");
 }
 
+
+}
+
+#[cfg(windows)]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    windows_probe::main();
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("This diagnostic tool is only available on Windows. Use openrevo-probe on Linux.");
+    std::process::exit(1);
+}

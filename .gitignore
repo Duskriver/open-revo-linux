@@ -40,6 +40,9 @@ src-tauri/target/
 # Generated artifacts & releases
 dist_release/
 coverage/
+test-results/
+dist_linux/
+__pycache__/
 src-tauri/gen/schemas/
 vite.config.ts.timestamp-*.mjs
 
@@ -53,4 +56,7 @@ probe_scripts/
 safe_*.ps1
 run_*.bat
 check_vault_leaks.ps1
-scripts/
+scripts/*
+!scripts/check_vault_leaks.py
+!scripts/check_vault_leaks.ps1
+!scripts/ensure_ascii_crlf.py

@@ -1,4 +1,10 @@
-# OpenRevo (Open Control Center & Microkernel Hardware Hub for Mechrevo / TongFang Laptops)
+# OpenRevo for Linux
+
+> Community Linux port maintained by [Duskriver](https://github.com/Duskriver), based on [faintonce/open-revo](https://github.com/faintonce/open-revo). Upstream history, copyright notices and the GPL-3.0-or-later license are preserved. Linux port and fork release configuration updated on 2026-10-31.
+>
+> Native Linux windows, system power profiles, monitoring and standard backlight interfaces are implemented. EC fan control, RGB and cooling hardware remain pending. **The upstream feature descriptions below primarily describe Windows. See [Linux capabilities, building and verification](docs/linux-port.md) for this port's actual scope.**
+
+Linux downloads: [Fork Releases](https://github.com/Duskriver/open-revo-linux/releases) (build from source until the first preview is published). Report Linux issues in [this fork](https://github.com/Duskriver/open-revo-linux/issues).
 
 <div align="center">
 
@@ -10,7 +16,7 @@
 
 ![OpenRevo Banner](./docs/logo_s.jpg)
 
-[![Version](https://img.shields.io/badge/Release-v0.9.3-6366f1.svg?style=flat-square)](https://github.com/faintonce/open-revo/releases)
+[![Linux CI](https://github.com/Duskriver/open-revo-linux/actions/workflows/linux.yml/badge.svg)](https://github.com/Duskriver/open-revo-linux/actions/workflows/linux.yml)
 [![License](https://img.shields.io/badge/License-GPL--3.0-10b981.svg?style=flat-square)](LICENSE)
 [![Framework](https://img.shields.io/badge/Framework-Tauri%20v2%20+%20Rust-f59e0b.svg?style=flat-square)](https://v2.tauri.app/)
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20+%20TypeScript-38bdf8.svg?style=flat-square)](https://react.dev/)
@@ -111,6 +117,21 @@ If you have an unadapted model (Jiaolong, Kuangshi, Yaoshi, Jiguang, Wujie, Yilo
 ---
 
 ## 🚀 Quick Start
+
+### Linux
+
+Install the [Linux prerequisites](docs/linux-port.md), then run:
+
+```sh
+git clone https://github.com/Duskriver/open-revo-linux.git
+cd open-revo-linux
+pnpm install --frozen-lockfile
+pnpm linux:dev
+# Build a Debian package
+pnpm linux:build
+```
+
+Use [Linux Releases](https://github.com/Duskriver/open-revo-linux/releases) for preview packages. Run the GUI as your regular desktop user. The following Windows instructions refer to upstream releases.
 
 ### 📥 Option 1: Direct Download (Recommended)
 Download the standalone executable from the [Releases Page](https://github.com/faintonce/open-revo/releases):

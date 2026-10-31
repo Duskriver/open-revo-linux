@@ -3,8 +3,11 @@
 //! telemetry, and power orchestration engine for Mechrevo laptops.
 
 pub mod event;
+#[cfg(windows)]
 pub mod hal;
+#[cfg(windows)]
 pub mod driver;
+#[cfg(windows)]
 pub mod system;
 
 pub use event::{
@@ -13,3 +16,6 @@ pub use event::{
     SharedEventSink,
 };
 
+
+#[cfg(target_os = "linux")]
+pub mod linux;

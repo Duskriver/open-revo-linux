@@ -174,7 +174,7 @@ pub fn build_custom_fan_table(
         }
 
         // CRITICAL MECHREVO / UNIWILL EC FIRMWARE RULE:
-        // Step 0 (EC 3872 / 3920) is the Zero-RPM standby threshold (0~50°C idle).
+        // Step 0 in the CPU/GPU fan tables is the Zero-RPM standby threshold (0~50°C idle).
         // It MUST ALWAYS be 0x00! If written with non-zero, the EC fan FSM state machine
         // treats it as invalid standby configuration and completely locks up fan control!
         duty[0] = 0;

@@ -4,7 +4,7 @@
 // 1. Dedicated 3-register envelope: ONLY ADDR_DB_CTRL1, ADDR_TGP_OFFSET, ADDR_DB_WATTS1!
 // 2. ADDR_DB_FLAG1 MUST be kept at 0xFF (Handshake kept alive, NEVER write 0x00!)
 // 3. Strictly BANNED from writing ADDR_FAN_BOOST_CLAMP (SuperPerf is full-power only, writing breaks EC state machine)
-// 4. Strictly BANNED from writing mirror registers (1988, 2004, 2005)
+// 4. Strictly BANNED from writing mirror registers outside the declared GPU power contract
 // 5. Base TGP = Floor + ADDR_TGP_OFFSET. NEVER clear offset to 0 on mode changes!
 // 6. Automatically remove factory cold-start 5W thermal margin (10W -> 15W full release)
 

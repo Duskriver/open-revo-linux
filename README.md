@@ -1,4 +1,10 @@
-# OpenRevo (开源机械革命 / 同方笔记本控制中心与微内核硬件基座)
+# OpenRevo for Linux
+
+> **社区 Linux 移植开发版**：由 [Duskriver](https://github.com/Duskriver) 基于 [faintonce/open-revo](https://github.com/faintonce/open-revo) 开发，保留上游历史、版权声明与 GPL-3.0-or-later 许可。Linux 适配及本 Fork 发布配置于 2026-10-31 整理。
+>
+> 当前已接入原生 Linux 窗口、系统性能档位、硬件监测与标准背光接口；EC 风扇、RGB、水冷等仍待移植。**以下上游功能介绍主要对应 Windows，Linux 支持以 [功能范围与验证文档](docs/linux-port.md) 为准。**
+
+Linux 下载：[本 Fork Releases](https://github.com/Duskriver/open-revo-linux/releases)（首个预览版发布前请从源码构建）。问题反馈：[本 Fork Issues](https://github.com/Duskriver/open-revo-linux/issues)。
 
 <div align="center">
 
@@ -10,7 +16,7 @@
 
 ![OpenRevo Banner](./docs/logo_s.jpg)
 
-[![Version](https://img.shields.io/badge/Release-v0.9.3-6366f1.svg?style=flat-square)](https://github.com/faintonce/open-revo/releases)
+[![Linux CI](https://github.com/Duskriver/open-revo-linux/actions/workflows/linux.yml/badge.svg)](https://github.com/Duskriver/open-revo-linux/actions/workflows/linux.yml)
 [![License](https://img.shields.io/badge/License-GPL--3.0-10b981.svg?style=flat-square)](LICENSE)
 [![Framework](https://img.shields.io/badge/Framework-Tauri%20v2%20+%20Rust-f59e0b.svg?style=flat-square)](https://v2.tauri.app/)
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20+%20TypeScript-38bdf8.svg?style=flat-square)](https://react.dev/)
@@ -177,8 +183,24 @@ OpenRevo 致力于打造属于全同方/机革玩家的通用硬件基础设施�
 
 ## 🚀 快速上手
 
-### 📥 方式一：直接下载使用（推荐）
-前往项目 [Releases 页面](https://github.com/faintonce/open-revo/releases) 下载最新版本单文件免安装绿色版：
+### Linux：构建与使用
+
+安装 [Linux 构建依赖](docs/linux-port.md#构建与启动) 后运行：
+
+```sh
+git clone https://github.com/Duskriver/open-revo-linux.git
+cd open-revo-linux
+pnpm install --frozen-lockfile
+pnpm linux:dev
+# 构建 Debian 安装包
+pnpm linux:build
+```
+
+预览版安装包发布于 [Linux Releases](https://github.com/Duskriver/open-revo-linux/releases)。安装后通过桌面应用启动器以普通用户运行；不要使用管理员身份启动 GUI。机型与内核公开的接口决定可用功能。
+
+### Windows：上游下载与使用
+
+前往 [上游 Windows Releases](https://github.com/faintonce/open-revo/releases) 下载原作者发布的 Windows 版本：
 1. 下载 `OpenRevo.exe`（仅约 2MB）；
 2. 右键以管理员身份运行；
 3. 为避免冲突，**接管官方控制中心**是推荐操作；
@@ -186,7 +208,7 @@ OpenRevo 致力于打造属于全同方/机革玩家的通用硬件基础设施�
 
 ---
 
-### 💻 方式二：从源码编译（开发者）
+### Windows：从本 Fork 源码编译（开发者）
 
 #### 环境准备
 - **Node.js** >= 18
@@ -196,8 +218,8 @@ OpenRevo 致力于打造属于全同方/机革玩家的通用硬件基础设施�
 
 #### 1. 克隆代码仓库
 ```bash
-git clone https://github.com/faintonce/open-revo.git
-cd open-revo
+git clone https://github.com/Duskriver/open-revo-linux.git
+cd open-revo-linux
 ```
 
 #### 2. 安装前端依赖

@@ -818,7 +818,7 @@ impl BldDriverManager {
             initialized: AtomicBool::new(true),
         };
 
-        // 1. EC hardware identification & unlock (0x2000 -> 0x55 => 0x1060 |= 0x80)
+        // 1. EC hardware identification and unlock through registered vault aliases.
         mgr.hardware_ec_init();
 
         // 2. Disarm official Mechrevo Control Center MaxFanSpeed override lock if engaged (WMI MIFS Method 47)

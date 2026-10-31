@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --no-bundle"
+    "tauri:build": "tauri build --no-bundle",
+    "linux:dev": "tauri dev",
+    "linux:build": "tauri build --bundles deb",
+    "linux:check": "cargo test --manifest-path src-tauri/Cargo.toml -p openrevo-core && tsc --noEmit"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
@@ -26,5 +29,6 @@
     "@vitejs/plugin-react": "^4.3.3",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
-  }
+  },
+  "packageManager": "pnpm@9.15.9"
 }

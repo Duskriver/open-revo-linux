@@ -1,36 +1,52 @@
+#[cfg(windows)]
 use parking_lot::Mutex;
+#[cfg(windows)]
 use std::sync::Arc;
+#[cfg(windows)]
 use tauri::Manager;
 
+#[cfg(windows)]
 pub mod commands;
+#[cfg(windows)]
 pub mod driver;
+#[cfg(windows)]
 pub mod hal;
+#[cfg(windows)]
 pub mod system;
+#[cfg(windows)]
 pub mod updater;
 
 pub use openrevo_core;
 
+#[cfg(windows)]
 use crate::driver::ec_bridge::{EcBridge, SharedEcBridge};
+#[cfg(windows)]
 use crate::driver::gpu_bridge::SharedGpuBridge;
 
 // Re-export common tray, window, and logger utilities for 100% backward compatibility
+#[cfg(windows)]
 pub use crate::system::logger::{is_cli_log_active, set_cli_log_active, CLI_LOG_MODE};
+#[cfg(windows)]
 pub use crate::system::tray::{
     update_tray_autostart_state, update_tray_fan_boost, update_tray_log_state,
     update_tray_power_mode, TrayKeeper, TrayMenuControls,
 };
+#[cfg(windows)]
 pub use crate::system::window::{ensure_window_alive, restore_and_sync_window};
 
+#[cfg(windows)]
 struct TauriEventSink {
     app: tauri::AppHandle,
 }
 
+#[cfg(windows)]
 impl TauriEventSink {
     fn new(app: tauri::AppHandle) -> Self {
         Self { app }
     }
 }
 
+#[cfg(windows)]
 impl openrevo_core::CoreEventSink for TauriEventSink {
     fn emit(&self, event: &str, payload: serde_json::Value) {
         use tauri::Emitter;
@@ -69,6 +85,7 @@ impl openrevo_core::CoreEventSink for TauriEventSink {
     }
 }
 
+#[cfg(windows)]
 pub fn run() {
     // 0. Disable WebView2 background throttling & renderer suspension for HUD overlay and widgets
     #[cfg(windows)]
@@ -164,6 +181,7 @@ pub fn run() {
         .plugin(single_instance_plugin)
         .invoke_handler(tauri::generate_handler![
             commands::hardware_cmd::get_model_capabilities,
+            platform::get_platform,
             commands::hardware_cmd::get_hardware_status,
             commands::hardware_cmd::set_power_mode,
             commands::hardware_cmd::set_fan_boost,
@@ -465,4 +483,16 @@ pub fn run() {
                 crate::system::plugin_service::shutdown_all_plugin_services();
             }
         });
+}
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::run;
+
+mod platform {
+    #[tauri::command]
+    pub fn get_platform() -> &'static str {
+        std::env::consts::OS
+    }
 }

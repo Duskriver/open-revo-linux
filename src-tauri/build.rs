@@ -96,6 +96,10 @@ pub fn deobf_bytes(bytes: &[u8], key: u8) -> Vec<u8> {
                 let ioctl_write = driver["IOCTL_ECWRITE"].as_u64().unwrap_or(0x9c40a48c) as u32;
                 code.push_str(&format!("    pub const IOCTL_ECREAD: u32 = deobf_u32(0x{:08X});\n", ioctl_read ^ k_u32));
                 code.push_str(&format!("    pub const IOCTL_ECWRITE: u32 = deobf_u32(0x{:08X});\n", ioctl_write ^ k_u32));
+                for name in ["IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS", "IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS"] {
+                    let value = driver[name].as_u64().expect("Display IOCTL missing from hardware registry") as u32;
+                    code.push_str(&format!("    pub const {}: u32 = deobf_u32(0x{:08X});\n", name, value ^ k_u32));
+                }
                 let port_addr = driver["PORT_BLD_EC_ADDR"].as_u64().unwrap_or(0x4E) as u16;
                 let port_data = driver["PORT_BLD_EC_DATA"].as_u64().unwrap_or(0x4F) as u16;
                 code.push_str(&format!("    pub const PORT_BLD_EC_ADDR: u16 = deobf_u16(0x{:04X});\n", port_addr ^ k_u16));
@@ -341,6 +345,8 @@ pub mod driver {
     pub fn get_driver_path_null_terminated() -> Vec<u8> { b"\\\\.\\ACPIDriver\0".to_vec() }
     pub const IOCTL_ECREAD: u32 = 0;
     pub const IOCTL_ECWRITE: u32 = 0;
+    pub const IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS: u32 = 0;
+    pub const IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS: u32 = 0;
     pub const PORT_BLD_EC_ADDR: u16 = 0x4E;
     pub const PORT_BLD_EC_DATA: u16 = 0x4F;
     pub const PORT_ACPI_EC_CMD: u16 = 0x66;
@@ -422,6 +428,11 @@ fn main() {
         );
     } else {
         println!("cargo:rustc-env=OPENREVO_APP_VERSION={}", env!("CARGO_PKG_VERSION"));
+    }
+
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        tauri_build::build();
+        return;
     }
 
     let mut windows = tauri_build::WindowsAttributes::new();

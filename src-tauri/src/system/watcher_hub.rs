@@ -21,7 +21,7 @@ fn default_cooldown() -> u64 {
     5000 // 5 seconds default cooldown between triggers
 }
 
-/// Helper deserializer to parse u16 from either an integer or hex/dec string (e.g. 1873, "0x0751", "751", "1873")
+/// Helper deserializer to parse u16 from either an integer or a hex/dec string.
 pub fn deserialize_hex_or_dec_u16<'de, D>(deserializer: D) -> Result<u16, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -30,7 +30,7 @@ where
     impl<'de> serde::de::Visitor<'de> for HexOrDecVisitor {
         type Value = u16;
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("an integer or hex/dec string like '0x0751', '751' or '1873'")
+            formatter.write_str("an integer or hex/dec string like '0x002A', '2A' or '42'")
         }
         fn visit_u64<E>(self, value: u64) -> Result<u16, E>
         where

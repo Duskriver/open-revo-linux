@@ -735,7 +735,7 @@ impl IteLightingManager {
             return false;
         }
 
-        // SingleZone RGB or SingleColor keyboards physically wire registers 1897~1899 to keyboard backlighting PWM;
+        // SingleZone RGB or SingleColor keyboards wire the EC RGB channels to keyboard backlighting PWM;
         // they NEVER have an independent EC Shield Logo (verified via official Tongfang NvramVariable.cs line 782).
         let raw_kb_support = crate::driver::wmi_ec::wmi_read_ec(ADDR_SUPPORT_BYTE2).unwrap_or(0);
         let is_single_zone = (raw_kb_support & 0x04) != 0;

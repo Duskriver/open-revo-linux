@@ -22,6 +22,7 @@ permissions:
 
 jobs:
   build-windows:
+    if: github.repository == 'faintonce/open-revo'
     name: Build & Package Windows (x64)
     runs-on: windows-latest
 
@@ -57,12 +58,7 @@ jobs:
       - name: Verify Hardware Vault Gatekeeper
         shell: pwsh
         run: |
-          if (Test-Path "./scripts/check_vault_leaks.ps1") {
-              Write-Host "[*] Running Vault Leak Gatekeeper..." -ForegroundColor Cyan
-              & ./scripts/check_vault_leaks.ps1
-          } else {
-              Write-Host "[*] Vault leak script not present in repository checkout, skipping check." -ForegroundColor Yellow
-          }
+          & ./scripts/check_vault_leaks.ps1
 
       - name: Build Standalone Executable
         run: pnpm tauri build --no-bundle
