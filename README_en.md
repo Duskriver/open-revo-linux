@@ -4,7 +4,7 @@
 >
 > Native Linux windows, system power profiles, monitoring and standard backlight interfaces are implemented. EC fan control, RGB and cooling hardware remain pending. **The upstream feature descriptions below primarily describe Windows. See [Linux capabilities, building and verification](docs/linux-port.md) for this port's actual scope.**
 
-Linux downloads: [Fork Releases](https://github.com/Duskriver/open-revo-linux/releases) (build from source until the first preview is published). Report Linux issues in [this fork](https://github.com/Duskriver/open-revo-linux/issues).
+Linux downloads: [v0.9.3-linux.1 preview](https://github.com/Duskriver/open-revo-linux/releases/tag/v0.9.3-linux.1), including the Debian package, corresponding source and SHA-256 checksums. Report Linux issues in [this fork](https://github.com/Duskriver/open-revo-linux/issues).
 
 <div align="center">
 

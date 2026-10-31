@@ -4,7 +4,7 @@
 >
 > 当前已接入原生 Linux 窗口、系统性能档位、硬件监测与标准背光接口；EC 风扇、RGB、水冷等仍待移植。**以下上游功能介绍主要对应 Windows，Linux 支持以 [功能范围与验证文档](docs/linux-port.md) 为准。**
 
-Linux 下载：[本 Fork Releases](https://github.com/Duskriver/open-revo-linux/releases)（首个预览版发布前请从源码构建）。问题反馈：[本 Fork Issues](https://github.com/Duskriver/open-revo-linux/issues)。
+Linux 下载：[v0.9.3-linux.1 预览版](https://github.com/Duskriver/open-revo-linux/releases/tag/v0.9.3-linux.1)（含 Debian 安装包、对应源码和 SHA-256 校验文件）。问题反馈：[本 Fork Issues](https://github.com/Duskriver/open-revo-linux/issues)。
 
 <div align="center">
 
