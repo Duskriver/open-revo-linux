@@ -11,6 +11,8 @@ A community Linux control center for MECHREVO laptops, maintained by [Duskriver]
 
 **This is a preview.** Standard controls depend on interfaces exposed by the Linux kernel. OEM EC controls are limited to an explicitly verified model and BIOS. Some tuning features are implemented and software-tested but still await powered, under-load hardware validation. Released packages may lag behind `main`; consult the notes for the version you install.
 
+`0.9.3-linux.2` combines the GUI and DKMS driver source in one complete `.deb`. Installation, native-window tests and a short fan-boost/restore test have passed on the maintainer's machine; see the [release notes](docs/linux-release-notes.md).
+
 [Linux downloads](https://github.com/Duskriver/open-revo-linux/releases) · [Capabilities and installation](docs/linux-port.md) · [Phased refactoring record](docs/linux-refactor.md) · [Issue tracker](https://github.com/Duskriver/open-revo-linux/issues)
 
 ## Interface
@@ -55,9 +57,17 @@ Balanced / turbo mode, OEM CPU tuning and custom fan curve application require b
 
 ## Installation and use
 
-Download a Debian application package, corresponding source and checksums from this fork's [Releases](https://github.com/Duskriver/open-revo-linux/releases). Read the release notes and install using your distribution's package manager.
+The complete package is named `OpenRevo_<version>_amd64.deb`. Build it from source, or obtain it with the corresponding source and checksums from this fork's [Releases](https://github.com/Duskriver/open-revo-linux/releases). Install with APT while connected to the internet:
 
-Launch OpenRevo from your desktop application launcher as a regular user. It uses the system GTK / WebKitGTK libraries and does not require Wine. OEM features additionally require a matching `openrevo_ec` kernel module; a working application package does not imply that the module is installed or your hardware matches. See the [Linux installation document](docs/linux-port.md) for driver installation, permissions, kernel upgrades and Secure Boot.
+```sh
+sudo apt install ./OpenRevo_0.9.3-linux.2_amd64.deb
+```
+
+APT installs the GUI libraries, DKMS and build tools, and replaces the old separate driver package automatically. Installed kernel headers can satisfy the dependency; otherwise APT installs a distribution generic headers metapackage. The installer checks that headers match the running kernel, then builds and enables the driver when the model and BIOS are supported and signature checks permit loading. Nonstandard kernels require matching headers. Secure Boot may require MOK enrollment through the system's prompts. Upgrades never force-unload a busy old module; the installer reports when a reboot is required.
+
+When the driver needs headers, MOK enrollment or a reboot, or the hardware is unsupported, the installer records that OEM controls are not ready. Standard system monitoring remains available.
+
+Launch OpenRevo from your desktop application launcher as a regular user. It uses the system GTK / WebKitGTK libraries and does not require Wine. See the [Linux installation document](docs/linux-port.md#完整-debian-包安装与升级) for installation status, migration from manually installed modules and Secure Boot.
 
 ## Build from source
 
@@ -75,13 +85,13 @@ pnpm install --frozen-lockfile
 pnpm linux:dev
 ```
 
-Build the Debian application package:
+Build the complete Debian package containing the GUI and DKMS driver source:
 
 ```sh
 pnpm linux:build
 ```
 
-The executable and package are written to `src-tauri/target/release/open-revo` and `src-tauri/target/release/bundle/deb/`. They depend on system libraries; compatibility must be checked on the target distribution.
+The executable is written to `src-tauri/target/release/open-revo`, and the complete package to `dist_release/OpenRevo_<version>_amd64.deb`. The intermediate Tauri application package is not a release artifact. Building does not install or load the kernel module. The application depends on system libraries; compatibility must be checked on the target distribution.
 
 ## Diagnostics and verification
 

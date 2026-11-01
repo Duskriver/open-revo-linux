@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    remove|purge|disappear|abort-install|abort-upgrade|failed-upgrade)
+        # This must still work after the package helper has disappeared.
+        if command -v dkms >/dev/null 2>&1; then
+            status=$(dkms status -m openrevo-ec -v '@VERSION@')
+            if [ -n "$status" ]; then
+                dkms remove -m openrevo-ec -v '@VERSION@' --all
+            fi
+        elif [ -e '/var/lib/dkms/openrevo-ec/@VERSION@' ]; then
+            printf '%s\n' 'DKMS is unavailable but this version remains registered.' >&2
+            printf '%s\n' 'Restore dkms and retry removing or purging open-revo.' >&2
+            exit 1
+        fi
+        # Preserve a truthful diagnostic record without deleting user data.
+        if [ -d /var/lib/open-revo ]; then
+            printf '%s\n' '{"schema":1,"version":"@VERSION@","state":"removed","ready":false,"message":"Package removed; an active module may remain until reboot."}' > /var/lib/open-revo/driver-status.json
+        fi
+        ;;
+esac
+exit 0

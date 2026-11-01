@@ -23,10 +23,12 @@ CMD 的转义解析缺陷将 `\"` 错误解析，导致 `rmdir /s /q` 接收到�
 4. **Linux-only 开发入口**：
    - `pnpm linux:dev`：启动 Linux 桌面程序。
    - `pnpm check`：硬件字典边界、Python 测试、Rust 核心测试和 TypeScript 检查。
-   - `pnpm linux:build`：构建 Debian 应用包。
+   - `pnpm linux:build`：构建包含 GUI 与 DKMS 驱动源码的完整 Debian 包，输出到 `dist_release/OpenRevo_<version>_amd64.deb`；仅构建，不安装或加载模块。
+   - `python3 packaging/build_linux_package.py --verify <完整包路径>`：检查完整包内容与安装元数据。
+   - `pnpm linux:driver:build`：仅供驱动开发的独立包构建入口，不作为默认用户发行产物。
    - `make -C drivers/openrevo-ec test`：无硬件的内核事务故障注入测试。
    - `make -C drivers/openrevo-ec`：仅编译内核模块，不加载。
-   - 发布以 `src-tauri/tauri.conf.json` 为版本来源，产物归档至 `dist_release/`。
+   - 发布以 `src-tauri/tauri.conf.json` 为版本来源，产物归档至 `dist_release/`；公开发行一个完整 `.deb`，另附对应源码和 SHA-256 清单，不发布 Tauri 中间应用包。
 5. **支持边界**：当前只维护 Linux。应用普通用户运行，Tauri 只承载桌面集成与 IPC，硬件逻辑在 `openrevo-core` 和 `drivers/openrevo-ec`。模块安装/替换和真实硬件调节应与离线构建测试分开确认。
 
 ## 4. 核心硬件资产字典与 HAL 强隔离守则 (HARDWARE ASSET DICTIONARY & HAL ISOLATION)

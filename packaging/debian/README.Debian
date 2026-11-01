@@ -1,0 +1,47 @@
+OpenRevo @VERSION@ for Debian and Ubuntu
+======================================
+
+This package contains the ordinary-user desktop application and the EC
+driver source. Install it using apt to resolve its declared dependencies.
+The package scripts never invoke apt themselves.
+
+Configuration delegates module registration, compilation, installation,
+and signing to the distribution DKMS helper. On the running host the
+installer then activates the module and refreshes permissions only for
+/dev/openrevo_ec. Active local sessions receive access through uaccess.
+The GUI itself does not run as root.
+
+The result is recorded in /var/lib/open-revo/driver-status.json. A ready
+result requires the installed and loaded module source versions to match,
+a bound device, and verified read/write access for the active local user.
+This file records the last configuration attempt, not continuous health.
+
+On upgrade, an identical loaded srcversion is retained. A changed module
+is removed only through normal modprobe -r. If in use, it is left loaded
+and a reboot is requested. No forced unload is performed. Package removal
+unregisters only the package's exact DKMS version and does not unload an
+active module. An already loaded module may remain until reboot.
+
+An installed application can report ready=false:
+- Missing running-kernel headers: install linux-headers-$(uname -r), or
+  reboot into the newly installed distribution kernel with matching headers.
+- Secure Boot signing-key rejection: inspect mokutil --sb-state, enroll the
+  distribution DKMS MOK as described by the distribution, then reboot.
+- No supported EC device: standard monitoring is available; the kernel
+  driver requires a verified model and BIOS. Inspect sudo journalctl -k.
+- No active local session: log in locally with systemd-logind running.
+- /etc/dkms/no-autoinstall: review this administrator policy explicitly.
+- Chroot or container: DKMS can build but activation and device permissions
+  are deferred. Configured DKMS activation hooks must be reviewed first.
+
+After resolving an outstanding condition, retry:
+  sudo dpkg --configure open-revo
+
+For a package already marked configured, rerun the explicit helper:
+  sudo /usr/lib/open-revo/driver-setup configure @VERSION@
+
+Genuine DKMS build/install failures, unexpected command failures, and
+manual duplicate modules fail configuration. Duplicates under
+/lib/modules/<kernel>/extra/openrevo/openrevo_ec.ko (including compressed
+variants) are reported and preserved for explicit administrator handling.
+No package script removes arbitrary old module files.

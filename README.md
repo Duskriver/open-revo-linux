@@ -11,6 +11,8 @@
 
 **当前为预览版。** 标准系统接口按内核能力提供功能；OEM EC 控制仅支持明确核验的机型和 BIOS。部分调校功能已有实现与软件测试，仍待接电带载实测。发布包的功能以对应 Release 说明为准，可能落后于 `main`。
 
+`0.9.3-linux.2` 使用一个同时包含 GUI 与 DKMS 驱动源码的完整 `.deb`。已在维护者本机完成安装、窗口及短时强冷恢复验证，详见 [版本说明](docs/linux-release-notes.md)。
+
 [下载 Linux 预览版](https://github.com/Duskriver/open-revo-linux/releases) · [功能与安装说明](docs/linux-port.md) · [分阶段重构记录](docs/linux-refactor.md) · [问题反馈](https://github.com/Duskriver/open-revo-linux/issues)
 
 ## 界面
@@ -55,9 +57,17 @@ RGB 多色灯效、灯带、BLE 水冷、GPU MUX / 超频、全局快捷键 / OS
 
 ## 安装与运行
 
-从本 Fork 的 [Releases](https://github.com/Duskriver/open-revo-linux/releases) 获取 Debian 应用包、对应源码和校验文件，阅读该版本说明后使用发行版包管理器安装。
+完整包的文件名为 `OpenRevo_<version>_amd64.deb`。可从源码构建，或从本 Fork 的 [Releases](https://github.com/Duskriver/open-revo-linux/releases) 获取包、对应源码和校验文件。联网使用 APT 安装：
 
-通过桌面应用启动器以普通用户运行 OpenRevo。应用使用系统 GTK / WebKitGTK，不需要 Wine。OEM 功能另需匹配的 `openrevo_ec` 内核模块；应用包可用不代表模块已安装或机型已匹配。驱动安装、权限、内核升级和 Secure Boot 说明见 [Linux 安装文档](docs/linux-port.md)。
+```sh
+sudo apt install ./OpenRevo_0.9.3-linux.2_amd64.deb
+```
+
+APT 会安装 GUI 运行库、DKMS 和编译工具，并自动替换旧的拆分驱动包。已有内核 headers 可以满足依赖；没有时安装发行版通用 headers 元包。安装程序仍会检查 headers 是否与当前运行内核匹配，匹配且机型/BIOS 受支持、签名检查允许时，自动构建并启用驱动。非标准内核需提供匹配 headers；Secure Boot 可能需要按系统提示登记 MOK。升级不会强制卸载忙碌的旧模块，需要重启时安装程序会明确提示。
+
+驱动等待 headers、MOK 或重启，以及机型不受支持时，安装程序会记录 OEM 控制未就绪，应用仍可使用标准系统监控。
+
+通过桌面应用启动器以普通用户运行 OpenRevo，使用系统 GTK / WebKitGTK，不需要 Wine。安装状态、手工旧模块迁移和 Secure Boot 说明见 [Linux 安装文档](docs/linux-port.md#完整-debian-包安装与升级)。
 
 ## 从源码构建
 
@@ -75,13 +85,13 @@ pnpm install --frozen-lockfile
 pnpm linux:dev
 ```
 
-构建 Debian 应用包：
+构建包含 GUI 与 DKMS 驱动源码的完整 Debian 包：
 
 ```sh
 pnpm linux:build
 ```
 
-程序和安装包分别输出到 `src-tauri/target/release/open-revo` 与 `src-tauri/target/release/bundle/deb/`。构建产物依赖系统动态库，应在目标发行版验证兼容性。
+程序输出到 `src-tauri/target/release/open-revo`，完整安装包输出到 `dist_release/OpenRevo_<version>_amd64.deb`。Tauri 生成的中间应用包不作为发布产物。构建不会安装或加载内核模块；产物依赖系统动态库，应在目标发行版验证兼容性。
 
 ## 诊断与验证
 

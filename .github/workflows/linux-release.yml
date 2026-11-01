@@ -42,32 +42,31 @@ jobs:
         with:
           name: openrevo-linux-x86_64
           path: dist_release/ci
-      - name: Prepare packages, source and checksums
+      - name: Prepare complete package, source and checksums
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 - <<'PY'
           import hashlib
+          import json
           import os
           from pathlib import Path
           import shutil
           import subprocess
           root = Path('dist_release')
           tag = os.environ['RELEASE_TAG']
+          version = json.loads(Path('src-tauri/tauri.conf.json').read_text())['version']
           debs = list((root / 'ci').rglob('*.deb'))
-          assert len(debs) == 2, 'Expected application and DKMS packages'
-          assert sum(p.name.startswith('openrevo-ec-dkms_') for p in debs) == 1
-          assert sum(p.name.startswith('OpenRevo_') for p in debs) == 1
-          packages = []
-          for deb in debs:
-              package = root / deb.name
-              shutil.copy2(deb, package)
-              packages.append(package)
+          assert len(debs) == 1, 'Expected one complete OpenRevo package'
+          assert debs[0].name == f'OpenRevo_{version}_amd64.deb', 'Unexpected package filename'
+          subprocess.run(['python3', 'packaging/build_linux_package.py', '--verify', str(debs[0])], check=True)
+          package = root / debs[0].name
+          shutil.copy2(debs[0], package)
           source = root / f'OpenRevo-{tag}-source.tar.gz'
           subprocess.run(['git', 'archive', '--format=tar.gz',
                           f'--prefix=open-revo-linux-{tag}/',
                           f'--output={source}', 'HEAD'], check=True)
-          files = (*packages, source)
+          files = (package, source)
           (root / 'SHA256SUMS').write_text(''.join(
               f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n' for path in files
           ))
@@ -83,6 +82,6 @@ jobs:
           fail_on_unmatched_files: true
           body_path: docs/linux-release-notes.md
           files: |
-            dist_release/*.deb
+            dist_release/OpenRevo_*.deb
             dist_release/*-source.tar.gz
             dist_release/SHA256SUMS

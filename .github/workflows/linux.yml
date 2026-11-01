@@ -47,37 +47,27 @@ jobs:
         run: cargo install tauri-driver --locked
       - name: Test native window
         run: dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
-      - name: Build Debian application package
+      - name: Build complete Debian package
         run: pnpm linux:build
-      - name: Build independent DKMS package
-        run: pnpm linux:driver:build
-      - name: Verify Debian package contents
+      - name: Verify complete Debian package
+        id: package
         run: |
           python3 - <<'PY'
-          import io
           import json
+          import os
           from pathlib import Path
           import subprocess
-          import tarfile
           version = json.loads(Path('src-tauri/tauri.conf.json').read_text())['version']
-          package = Path(f'src-tauri/target/release/bundle/deb/OpenRevo_{version}_amd64.deb')
-          actual = subprocess.check_output(['dpkg-deb', '--field', str(package), 'Version'], text=True).strip()
-          assert actual == version, f'Unexpected package version: {actual}'
-          data = subprocess.check_output(['dpkg-deb', '--fsys-tarfile', str(package)])
-          with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-              binaries = [m.name.lstrip('./') for m in archive if m.isfile() and m.name.lstrip('./').startswith('usr/bin/')]
-          assert binaries == ['usr/bin/open-revo'], f'Unexpected packaged binaries: {binaries}'
-          print(f'Verified {package.name}: only the Linux main executable is installed')
+          package = Path(f'dist_release/OpenRevo_{version}_amd64.deb')
+          subprocess.run(['python3', 'packaging/build_linux_package.py', '--verify', str(package)], check=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'path={package}\n')
           PY
       - uses: actions/upload-artifact@v4
         with:
           name: openrevo-linux-x86_64
           if-no-files-found: error
-          path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/open-revo
-            test-results/linux-window.png
-            dist_release/openrevo-ec-dkms_*.deb
+          path: ${{ steps.package.outputs.path }}
 
   kernel:
     name: Kernel module (${{ matrix.os }})

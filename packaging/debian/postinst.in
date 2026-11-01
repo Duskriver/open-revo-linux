@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    configure|abort-upgrade)
+        exec /usr/lib/open-revo/driver-setup configure '@VERSION@' "${2:-}"
+        ;;
+    abort-remove|abort-deconfigure)
+        # The remaining arguments may describe an in-favour package, not a version.
+        exec /usr/lib/open-revo/driver-setup configure '@VERSION@' ''
+        ;;
+esac
+exit 0

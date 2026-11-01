@@ -1,0 +1,315 @@
+#!/usr/bin/python3
+"""Configure the packaged driver without directly accessing EC registers."""
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+
+MODULE = 'openrevo_ec'
+DKMS_NAME = 'openrevo-ec'
+STATUS_PATH = '/var/lib/open-revo/driver-status.json'
+RETRY = 'After resolving this issue, run: sudo /usr/lib/open-revo/driver-setup configure @VERSION@'
+VERSION_PATTERN = r'[0-9][0-9A-Za-z.+~-]*'
+
+
+class SetupOutcome(Exception):
+    def __init__(self, state, message, code=1):
+        super().__init__(message)
+        self.state, self.code = state, code
+
+
+class DriverSetup:
+    """Dependency injection is available to tests, never through the CLI."""
+
+    def __init__(self, version, previous='', *, root=Path('/'),
+                 runner=subprocess.run, kernel=None):
+        if not re.fullmatch(VERSION_PATTERN, version):
+            raise ValueError('Invalid package version')
+        if previous and not re.fullmatch(VERSION_PATTERN, previous):
+            raise ValueError('Invalid previous package version')
+        self.root, self.runner = Path(root), runner
+        self.kernel = kernel or os.uname().release
+        if not re.fullmatch(r'[A-Za-z0-9._+-]+', self.kernel):
+            raise ValueError('Invalid kernel release')
+        self.version, self.previous = version, previous
+        self.data = dict(schema=1, version=version, previous_version=previous,
+                         kernel=self.kernel, ready=False, module_active=False)
+
+    def path(self, absolute):
+        return self.root / absolute.lstrip('/')
+
+    def record(self, state, message, ready=False):
+        message = message.replace('@VERSION@', self.version)
+        self.data.update(state=state, message=message, ready=ready,
+                         updated_at=datetime.now(timezone.utc).isoformat())
+        target = self.path(STATUS_PATH)
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        with tempfile.NamedTemporaryFile(mode='w', encoding='ascii',
+                                         prefix='driver-status-', suffix='.tmp',
+                                         dir=target.parent, delete=False) as output:
+            json.dump(self.data, output, indent=2, ensure_ascii=True)
+            output.write('\n')
+            temporary = Path(output.name)
+        temporary.chmod(0o644)
+        os.replace(temporary, target)
+        print(f'OpenRevo driver [{state}]: {message}', flush=True)
+
+    def command(self, args, timeout=30, capture=True):
+        try:
+            result = self.runner(args, text=True, stdout=subprocess.PIPE if capture else None,
+                                 stderr=subprocess.PIPE if capture else None, timeout=timeout,
+                                 env=dict(os.environ, LC_ALL='C'))
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SetupOutcome('command-failed', f'{args[0]}: {error}. {RETRY}') from error
+        if result.stdout:
+            print(result.stdout.rstrip(), flush=True)
+        if result.stderr:
+            print(result.stderr.rstrip(), file=sys.stderr, flush=True)
+        return result
+
+    def checked(self, args, state, message, timeout=30, capture=True):
+        result = self.command(args, timeout, capture)
+        if result.returncode:
+            detail = (result.stderr or result.stdout or '').strip()[-2000:]
+            raise SetupOutcome(state, f'{message} (exit {result.returncode}). {detail} {RETRY}')
+        return (result.stdout or '').strip()
+
+    def environment(self):
+        # VMs own their kernels; chroots and containers do not.
+        for flag, name in (('--chroot', 'chroot'), ('--container', 'container')):
+            result = self.command(['systemd-detect-virt', flag, '--quiet'])
+            if result.returncode == 0:
+                return name
+            if result.returncode != 1 or result.stderr.strip():
+                raise SetupOutcome('environment-unknown',
+                                   f'Cannot establish safe module activation: systemd-detect-virt {flag} failed. {RETRY}')
+        return 'host'
+
+    def reject_manual_modules(self):
+        modules = self.path('/lib/modules')
+        if not modules.exists():
+            return
+        for kernel in sorted(modules.iterdir()):
+            for suffix in ('', '.xz', '.zst', '.gz'):
+                candidate = kernel / 'extra/openrevo' / (MODULE + '.ko' + suffix)
+                if candidate.is_file() or candidate.is_symlink():
+                    raise SetupOutcome('manual-module-conflict',
+                                       f'Manually installed module found: {candidate}. '
+                                       'Back up and resolve this duplicate explicitly; '
+                                       f'no module was removed or unloaded. {RETRY}')
+
+    def isolated_dkms_guard(self):
+        # Optional administrator hooks must not activate host devices from a chroot.
+        keys = ('modprobe_on_install', 'post_transaction')
+        for key in keys:
+            if os.environ.get(key):
+                raise SetupOutcome('isolation-hook-conflict',
+                                   f'Unset {key} before building in an isolated environment.')
+        configs = [self.path('/etc/dkms/framework.conf')]
+        directory = self.path('/etc/dkms/framework.conf.d')
+        if directory.is_dir():
+            configs.extend(sorted(directory.glob('*.conf')))
+        for config in configs:
+            if not config.is_file():
+                continue
+            for line in config.read_text().splitlines():
+                match = re.match(r'\s*(?:export\s+)?(modprobe_on_install|post_transaction)\s*=(.*)', line)
+                if match and match[2].strip() not in ('', "''", '""'):
+                    raise SetupOutcome('isolation-hook-conflict',
+                                       f'Activation hook in {config}: {match[1]}. Review this DKMS setting '
+                                       'before isolated configuration; host modules and sysfs were not touched.')
+
+    def verify_installed(self):
+        output = self.checked(['dkms', 'status', '-m', DKMS_NAME, '-v', self.version,
+                               '-k', self.kernel], 'dkms-status-failed',
+                              'Cannot verify the installed DKMS version')
+        for line in output.splitlines():
+            head, separator, status = line.partition(':')
+            fields = [part.strip() for part in head.replace('/', ',', 1).split(',')]
+            if (separator and fields[:3] == [DKMS_NAME, self.version, self.kernel]
+                    and status.strip().startswith('installed')):
+                return
+        raise SetupOutcome('module-not-installed',
+                           f'DKMS has not installed openrevo-ec/{self.version} for {self.kernel}. '
+                           f'Inspect dkms status and /var/lib/dkms/openrevo-ec/{self.version}/. {RETRY}')
+
+    def disk_module(self):
+        filename = self.checked(['modinfo', '-k', self.kernel, '-F', 'filename', MODULE],
+                                'module-missing', 'No discoverable EC module for the current kernel')
+        expected = self.path(f'/lib/modules/{self.kernel}/updates/dkms').resolve()
+        actual = self.path(filename).resolve()
+        if not actual.is_relative_to(expected) or not actual.is_file():
+            raise SetupOutcome('module-shadowed',
+                               f'modinfo selected {filename}, outside this kernel\'s DKMS directory. '
+                               f'Check duplicate modules and run sudo depmod -a {self.kernel}. {RETRY}')
+        digest = self.checked(['modinfo', '-k', self.kernel, '-F', 'srcversion', MODULE],
+                              'module-missing', 'Cannot read the installed module source version')
+        if not re.fullmatch(r'[0-9A-Fa-f]+', digest):
+            raise SetupOutcome('module-version-unknown', f'The module has no usable srcversion. {RETRY}')
+        self.data.update(disk_module=filename, disk_srcversion=digest.upper())
+        return digest.upper()
+
+    def loaded_version(self):
+        directory = self.path('/sys/module/' + MODULE)
+        if not directory.exists():
+            return None
+        source = directory / 'srcversion'
+        return source.read_text().strip().upper() if source.is_file() else ''
+
+    def activate(self, disk_version):
+        running = self.loaded_version()
+        self.data.update(running_srcversion=running, module_active=running is not None)
+        if running is not None and running != disk_version:
+            result = self.command(['modprobe', '-r', MODULE])
+            if result.returncode:
+                if self.loaded_version() is not None:
+                    raise SetupOutcome('reboot-required',
+                                       'The previous EC module could not be removed normally and remains loaded. '
+                                       'Close OpenRevo and other device users, then retry configuration, or reboot. '
+                                       'No forced unload was attempted.', 0)
+                raise SetupOutcome('module-unload-failed', f'Normal module removal failed unexpectedly. {RETRY}')
+            if self.loaded_version() is not None:
+                raise SetupOutcome('module-unload-failed',
+                                   f'The previous module is still present after removal. Reboot. {RETRY}')
+            running = None
+            self.data.update(running_srcversion=None, module_active=False)
+        if running is None:
+            result = self.command(['modprobe', MODULE])
+            if result.returncode:
+                detail = (result.stderr or result.stdout).strip()
+                if any(word in detail.lower() for word in ('key was rejected', 'required key', 'key rejected')):
+                    raise SetupOutcome('secure-boot-action-required',
+                                       f'The kernel rejected the module signing key: {detail}. '
+                                       'Check mokutil --sb-state and DKMS signing settings; enroll the '
+                                       'distribution DKMS MOK, then reboot. See sudo journalctl -k. '
+                                       + RETRY, 0)
+                raise SetupOutcome('module-load-failed',
+                                   f'Cannot load the EC module: {detail}. Inspect sudo journalctl -k. {RETRY}')
+        running = self.loaded_version()
+        self.data.update(running_srcversion=running, module_active=running is not None)
+        if running != disk_version:
+            raise SetupOutcome('module-version-mismatch',
+                               f'The loaded module does not match the installed source version. Reboot. {RETRY}')
+
+    def refresh_device(self):
+        sysfs = self.path('/sys/class/misc/' + MODULE)
+        device = self.path('/dev/' + MODULE)
+        if not sysfs.exists():
+            raise SetupOutcome('unsupported-hardware',
+                               'The module loaded, but no supported EC device was bound. Standard system '
+                               'monitoring remains available. The driver enforces its model and BIOS list; '
+                               'check sudo journalctl -k for WMI/probe errors.', 0)
+        writes = self.path('/sys/module/' + MODULE + '/parameters/allow_writes')
+        if not writes.is_file() or writes.read_text().strip().lower() not in ('y', '1'):
+            raise SetupOutcome('device-read-only',
+                               'The loaded module has writes disabled. Review /etc/modprobe.d/openrevo-ec.conf '
+                               'and reboot to apply allow_writes=1. No running parameter was changed.', 0)
+        self.checked(['udevadm', 'control', '--reload-rules'], 'udev-failed', 'Could not reload udev rules')
+        self.checked(['udevadm', 'trigger', '--action=add', str(sysfs)], 'udev-failed',
+                     'Could not refresh the EC device permissions')
+        self.checked(['udevadm', 'settle', '--timeout=10'], 'udev-failed', 'Timed out waiting for permissions')
+        if not device.exists() or not stat.S_ISCHR(device.stat().st_mode):
+            raise SetupOutcome('device-node-missing', f'{device} is not a character device. {RETRY}')
+        devnum = device.stat().st_rdev
+        expected = sysfs / 'dev'
+        if not expected.is_file() or expected.read_text().strip() != f'{os.major(devnum)}:{os.minor(devnum)}':
+            raise SetupOutcome('device-node-mismatch', f'{device} does not match the bound device. {RETRY}')
+        properties = self.checked(['udevadm', 'info', '--query=property', '--path=' + str(sysfs)],
+                                  'udev-failed', 'Could not inspect EC device permissions')
+        values = dict(line.split('=', 1) for line in properties.splitlines() if '=' in line)
+        if 'uaccess' not in values.get('TAGS', '').split(':'):
+            raise SetupOutcome('udev-rule-missing', f'The device has no uaccess tag. Check installed rules. {RETRY}')
+        seat = values.get('ID_SEAT', 'seat0')
+        result = self.command(['loginctl', 'show-seat', seat, '--property=ActiveSession', '--value'])
+        session = result.stdout.strip()
+        if result.returncode or not session:
+            raise SetupOutcome('awaiting-session',
+                               'The driver is active, but no local session could be identified on the device seat. '
+                               'Log in locally with systemd-logind running to receive uaccess permissions.', 0)
+        result = self.command(['loginctl', 'show-session', session, '--property=User',
+                               '--property=Active', '--property=Remote'])
+        fields = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+        uid = fields.get('User', '')
+        if (result.returncode or fields.get('Active') != 'yes'
+                or fields.get('Remote') != 'no' or not uid.isdigit()):
+            raise SetupOutcome('awaiting-session',
+                               'The active local session changed during setup; log in locally and retry configuration.', 0)
+        acl = self.checked(['getfacl', '--omit-header', '--numeric', str(device)],
+                           'permissions-check-failed', 'Could not verify device access')
+        permissions = {}
+        for line in acl.splitlines():
+            entry = line.split('#', 1)[0].strip().split(':')
+            if len(entry) == 3:
+                permissions[(entry[0], entry[1])] = entry[2]
+        if int(uid) == device.stat().st_uid:
+            effective = set(permissions.get(('user', ''), ''))
+        else:
+            effective = set(permissions.get(('user', uid), '')) & set(permissions.get(('mask', ''), ''))
+        if not {'r', 'w'} <= effective:
+            raise SetupOutcome('permissions-not-ready',
+                               f'The active user {uid} has not received read/write device access. '
+                               f'Check systemd-logind and uaccess rules. {RETRY}')
+        self.data.update(active_uid=int(uid))
+
+    def configure(self):
+        self.record('configuring', 'Checking DKMS and the running environment.')
+        try:
+            self.data['environment'] = self.environment()
+            self.reject_manual_modules()
+            if self.path('/etc/dkms/no-autoinstall').exists():
+                raise SetupOutcome('autoinstall-disabled',
+                                   '/etc/dkms/no-autoinstall disables automatic builds. Review this '
+                                   f'administrator setting before enabling DKMS setup. {RETRY}', 0)
+            if self.data['environment'] != 'host':
+                self.isolated_dkms_guard()
+            helper = self.path('/usr/lib/dkms/common.postinst')
+            if not helper.is_file() or not os.access(helper, os.X_OK):
+                raise SetupOutcome('dkms-helper-missing', f'Missing executable {helper}. Repair dkms. {RETRY}')
+            self.checked([str(helper), DKMS_NAME, self.version, '/usr/share/open-revo', '', self.previous],
+                         'dkms-build-failed', 'DKMS could not build or install the EC module',
+                         timeout=None, capture=False)
+            if self.data['environment'] != 'host':
+                raise SetupOutcome('deferred-environment',
+                                   'DKMS processing finished in a chroot/container. Module activation and '
+                                   'permissions are deferred until booting this installation. Review DKMS '
+                                   'output for target kernel headers.', 0)
+            if not self.path(f'/lib/modules/{self.kernel}/build/include').is_dir():
+                raise SetupOutcome('headers-missing',
+                                   f'Headers for running kernel {self.kernel} are missing. Install '
+                                   f'linux-headers-{self.kernel}, or reboot into the newly installed '
+                                   f'distribution kernel with matching headers. {RETRY}', 0)
+            self.verify_installed()
+            self.activate(self.disk_module())
+            self.refresh_device()
+            self.record('ready', 'The current EC driver and active local session permissions are ready.', True)
+            return 0
+        except SetupOutcome as outcome:
+            self.record(outcome.state, str(outcome))
+            return outcome.code
+        except (OSError, ValueError) as error:
+            self.record('setup-failed', f'{error}. {RETRY}')
+            return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=['configure'])
+    parser.add_argument('version')
+    parser.add_argument('previous_version', nargs='?', default='')
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        parser.exit(1, 'Driver setup must be run by the package manager as root.\n')
+    try:
+        return DriverSetup(args.version, args.previous_version).configure()
+    except (OSError, ValueError) as error:
+        parser.exit(1, f'Cannot record or configure the driver: {error}\n')
+
+
+if __name__ == '__main__':
+    sys.exit(main())

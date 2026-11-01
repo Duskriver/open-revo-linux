@@ -2,7 +2,7 @@
 
 本分支以 Linux 为唯一目标，保留 [OpenRevo 上游](https://github.com/faintonce/open-revo) 的来源与 GPL-3.0-or-later 许可。技术栈为 Tauri 2、Rust、React 和 TypeScript，普通用户运行 GUI。
 
-当前 main 已完成 Linux 入口与核心整理，并接入新的内核事务协议。已发布的 `v0.9.3-linux.1` 预览包早于这些改动；本轮没有发布新版本。阶段记录见 [linux-refactor.md](linux-refactor.md)。
+当前 main 已完成 Linux 入口与核心整理，并接入新的内核事务协议。`0.9.3-linux.2` 将 GUI 和 DKMS 驱动源码合并为一个完整 Debian 包，已在维护者本机完成安装与验证。`v0.9.3-linux.1` 预览包早于这些改动。阶段记录见 [linux-refactor.md](linux-refactor.md)。
 
 ## 功能与验证范围
 
@@ -22,6 +22,10 @@
 
 ### 已有实机记录与新驱动状态
 
+当前仅由项目维护者在本机使用。2026-11-01 已安装 `0.9.3-linux.2` 完整包，应用与 DKMS 同版本、设备权限正常，安装状态为 `ready`，无需重启。安装后窗口回归 10 项通过；5 秒强冷达到 5085/5210 RPM 并正常释放，当前狂暴模式及 90/90/100 W 功耗保持不变。详情见 [本机安装验证记录](linux-release-notes.md#验证边界)。
+
+下述较早记录来自同日合并安装包之前的应用与事务驱动，用于补充控制行为的验证范围。
+
 历史实机环境为 MECHREVO / GM5HG7A / BIOS `N.1.09MRO19`、Ryzen 7 8845H、Ubuntu 26.04.1、Linux `7.0.0-38-generic`。旧驱动下已读取真实状态，验证办公模式、强冷和恢复；风扇约从 2500/2600 RPM 升至 5208/5401 RPM。
 
 出厂功耗表曾读到办公 35/35/70 W、均衡 65/65/100 W、狂暴 90/90/100 W。自定义仍保持 PL1 <= PL2、PL4 >= PL2 + 20 W、且不超过出厂上限，因此该机当前自定义 PL2 最高 80 W。原厂狂暴表不被改写。
@@ -40,7 +44,7 @@
 - `src-tauri/crates/openrevo-core/src/linux/`：系统发现与策略协调。
 - `src-tauri/crates/openrevo-core/src/hal/`：协议编码、风扇算法、读取与严格字典生成器。
 - `drivers/openrevo-ec/`：独立 WMI 驱动、模式/功耗事务和无硬件故障测试。
-- `packaging/`：独立 DKMS Debian 包构建与维护脚本。
+- `packaging/`：完整 Debian 包构建、校验与 DKMS 维护脚本；独立驱动包保留为开发入口。
 
 EC 物理地址、掩码和帧布局由 `src-tauri/config/ec_registry.json` 登记，Rust/C 构建阶段检查格式、范围和布局。新模块不接受用户指定地址的单字节写入，只接收版本化的模式、功耗、强冷和曲线请求。
 
@@ -61,7 +65,7 @@ sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
   libayatana-appindicator3-dev librsvg2-dev patchelf
 ```
 
-另需 Rust stable、Node.js 20+ 和 pnpm 9.15.9：
+另需 Rust stable、Node.js 22 和 pnpm 9.15.9：
 
 ```sh
 pnpm install --frozen-lockfile
@@ -69,11 +73,41 @@ pnpm linux:dev
 pnpm linux:build
 ```
 
-版本、窗口与应用打包配置统一在 `src-tauri/tauri.conf.json`。应用包输出到 `src-tauri/target/release/bundle/deb/`。程序依赖系统 GTK/WebKit 动态库；本机新发行版构建不保证能在更老系统运行，应用 CI 使用 Ubuntu 22.04 构建。
+版本、窗口与应用打包配置统一在 `src-tauri/tauri.conf.json`。`pnpm linux:build` 先构建 Tauri 应用，再合入 DKMS 源码和维护脚本，最终输出 `dist_release/OpenRevo_<version>_amd64.deb`。`src-tauri/target/release/bundle/deb/` 中的 Tauri 应用包是中间产物，不单独分发。构建不会安装或加载模块。程序依赖系统 GTK/WebKit 动态库；本机新发行版构建不保证能在更老系统运行，应用 CI 使用 Ubuntu 22.04 构建。
 
-## 独立 EC 驱动包
+## 完整 Debian 包安装与升级
 
-只有需要受支持机型的 OEM 功能时才安装驱动；标准系统监控不依赖此模块。先为目标内核安装匹配 headers。以下构建和测试命令不加载模块：
+用户只需安装一个完整包，其中包含 GUI、机型驱动源码、字典快照、生成头、维护脚本和系统配置。联网运行 APT，让包管理器安装 GUI 运行库、DKMS、Python、kmod、udev、编译工具与内核 headers 依赖。已安装的 headers 可通过 `linux-headers` 虚拟包满足依赖，避免仅因缺少通用元包而额外升级内核；没有 headers 时，APT 安装发行版通用 headers 元包。安装命令：
+
+```sh
+sudo apt install ./OpenRevo_0.9.3-linux.2_amd64.deb
+```
+
+若包位于项目的 `dist_release/`，在该目录执行上述命令，或为文件名加上对应路径。旧的拆分包 `openrevo-ec-dkms` 由包关系自动替换，无需另装第二个驱动包。
+
+当前运行内核有匹配 headers、机型/BIOS 在支持范围内且系统允许加载模块时，安装程序通过发行版 DKMS 机制构建并自动启用驱动。标准系统监控本身不依赖 OEM 模块。发行版通用 headers 依赖不能保证覆盖自编译、第三方或其他非标准内核；这种情况仍需先安装与运行内核精确匹配的 headers。
+
+后续内核升级使用发行版 DKMS 机制重新构建，并遵循系统的模块签名配置。Secure Boot 下可能需要完成签名和 MOK 登记；参见 [Ubuntu 官方说明](https://documentation.ubuntu.com/security/security-features/platform-protections/secure-boot/)。安装脚本不能代替用户完成固件中的 MOK 确认。
+
+已加载模块与新模块的 `srcversion` 相同时保留当前模块；不同时仅尝试正常卸载和加载。正在使用的旧模块不会被强制卸载，无法切换时会明确提示重启；重启前不能把旧模块当作新驱动使用。安装状态与后续处理提示记录在 `/var/lib/open-revo/driver-status.json`。在 chroot 或容器内构建安装镜像时，不会操作宿主机模块或设备。
+
+缺少当前内核 headers、等待 MOK 或重启，以及不受支持的机型，会记录 `ready=false` 和处理提示，同时完成应用安装，保留标准系统监控。实际 DKMS 编译失败或发现手工旧模块冲突则会报告安装配置错误，需要处理对应问题。应用安装完成不等于 OEM 控制已经就绪。
+
+处理提示中的问题后，配置失败的包可执行 `sudo dpkg --configure open-revo`。已完成配置、但驱动处于等待状态的包需要显式重试（版本号与已安装版本一致）：
+
+```sh
+sudo /usr/lib/open-revo/driver-setup configure 0.9.3-linux.2
+```
+
+`driver-status.json` 记录上次配置结果，不是持续更新的运行状态。
+
+旧的手工安装与旧的拆分 Debian 包不同。手工安装可能留有 `/lib/modules/<kernel>/extra/openrevo/openrevo_ec.ko` 或其压缩副本。安装程序会报告冲突并停止配置，不擅自删除文件。先记录 `modinfo -n openrevo_ec` 和 `dkms status`，备份并处理旧副本，再重新配置完整包；迁移应保留可恢复备份和回退步骤。
+
+卸载通过发行版包管理器处理：注销本包对应 DKMS 版本，不强制卸载当前模块；已加载模块在重启后退出。GUI 始终以普通用户运行。
+
+### 仅供开发的驱动构建
+
+驱动源码和无硬件测试仍可独立使用。以下命令不加载模块：
 
 ```sh
 make -C drivers/openrevo-ec test
@@ -81,17 +115,7 @@ make -C drivers/openrevo-ec
 pnpm linux:driver:build
 ```
 
-DKMS 包输出到 `dist_release/openrevo-ec-dkms_<version>_all.deb`，含源码、字典快照、生成头、测试及系统配置。构建阶段保留在 `dist_release/`，不自动递归清理。安装时将文件名替换为实际产物：
-
-```sh
-sudo apt install ./dist_release/openrevo-ec-dkms_<version>_all.deb
-```
-
-维护脚本调用发行版 DKMS helper，使后续内核升级触发重新构建，并使用系统 DKMS 签名配置；不会强制卸载正在使用的模块。升级后重启以启用新模块。Secure Boot 下仍需完成发行版要求的 MOK 登记；参见 [Ubuntu 官方说明](https://documentation.ubuntu.com/security/security-features/platform-protections/secure-boot/)。
-
-旧手动安装可能留有 `/lib/modules/<kernel>/extra/openrevo/openrevo_ec.ko`。安装包会报告冲突并停止配置，不擅自删除文件。先记录 `modinfo -n openrevo_ec` 和 `dkms status`，备份并处理旧副本，再重新配置包；本机迁移应保留可恢复备份和回退步骤。
-
-卸载通过发行版包管理器处理：仅注销本包对应 DKMS 版本，不强制卸载当前模块。重启后才退出已加载旧模块；如需立即切换，应先结束所有持有设备的程序，再明确执行模块重载。
+最后一项生成开发用的 `dist_release/openrevo-ec-dkms_<version>_all.deb`，不属于默认 CI 上传和公开分发产物。构建阶段目录保留在 `dist_release/`，不自动递归清理。
 
 ## 无界面诊断
 
@@ -117,8 +141,8 @@ dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
 
 `linux_ec_probe` 示例默认只读。经明确确认后可用 `--office` 验证办公模式、`--fan-smoke` 验证 5 秒强冷及释放恢复，或 `--ac-smoke` 验证均衡/狂暴和 35/35/70 W 功耗并恢复均衡。接电测试只接受原装电源、原厂均衡模式、自动风扇和已核验的出厂表；即使检查失败，也会尝试恢复并报告恢复结果。成功应用的模式和功耗不会仅靠进程退出自动撤销，因此该示例显式恢复均衡模式。
 
-CI 包含核心/字典/打包脚本测试、前端检查、原生窗口、Debian 应用与驱动包，以及 Ubuntu 22.04/24.04 headers 的内核模块编译；不再检查或发布 Windows 构建。
+CI 包含核心/字典/打包脚本测试、前端检查、原生窗口、完整 Debian 包，以及 Ubuntu 22.04/24.04 headers 的内核模块编译。默认仅构建并上传一个完整 `.deb`，通过 `python3 packaging/build_linux_package.py --verify <完整包路径>` 检查包内容与安装元数据；不再检查或发布 Windows 构建，也不安装或加载测试机模块。
 
 ## 发布
 
-继续使用 main 与 Tag 发布流程。Linux 预览标签为 `v<版本>-linux.<序号>`，必须匹配 `src-tauri/tauri.conf.json` 的版本。CI 生成应用 `.deb`、驱动 DKMS `.deb`、源码和 SHA-256 清单，创建 Release 草稿，检查实际验证记录后再发布。本轮重构不创建新版本标签或公开 Release。
+继续使用 main 与 Tag 发布流程。Linux 预览标签为 `v<版本>-linux.<序号>`，必须匹配 `src-tauri/tauri.conf.json` 的版本。发布流程只接受一个 `OpenRevo_<version>_amd64.deb` 完整包，另附对应源码和 SHA-256 清单，创建 Release 草稿，检查 CI、产物校验和该版本的实际验证记录后再公开发布。

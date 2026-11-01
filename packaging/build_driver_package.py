@@ -45,13 +45,11 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build(version, driver_source, output_dir):
+def stage_payload(version, driver_source, package_root, package_name=PACKAGE):
+    """Share the exact driver payload between complete and developer packages."""
     version = version_value(version)
     source = Path(driver_source).resolve(strict=True)
-    output = Path(output_dir).resolve()
-    release_root = (ROOT / 'dist_release').resolve()
-    if release_root == ROOT or not release_root.is_relative_to(ROOT) or not output.is_relative_to(release_root):
-        raise ValueError('Output directory must be inside this project\'s dist_release directory')
+    package_root = Path(package_root)
     inputs = {}
     for name in SOURCES + ('70-openrevo-ec.rules',):
         path = source / name
@@ -60,9 +58,6 @@ def build(version, driver_source, output_dir):
         inputs[path] = sha256(path)
     registry = ROOT / 'src-tauri/config/ec_registry.json'
     inputs[registry] = sha256(registry)
-    output.mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp(prefix='driver-package-', dir=output))
-    package_root = stage / 'root'
     module = package_root / 'usr/src' / f'openrevo-ec-{version}'
     module.mkdir(parents=True)
     for name in SOURCES:
@@ -78,8 +73,8 @@ def build(version, driver_source, output_dir):
     write(module / 'Makefile', template('Makefile', version))
     write(module / 'dkms.conf', template('dkms.conf.in', version))
     shutil.copyfile(ROOT / 'LICENSE', module / 'LICENSE')
-    doc = package_root / 'usr/share/doc' / PACKAGE
-    doc.mkdir(parents=True)
+    doc = package_root / 'usr/share/doc' / package_name
+    doc.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / 'LICENSE', doc / 'copyright')
     write(doc / 'README.Debian', template('README.Debian', version))
     write(doc / 'build-info.json', json.dumps({
@@ -91,6 +86,21 @@ def build(version, driver_source, output_dir):
     shutil.copyfile(source / '70-openrevo-ec.rules', rules)
     write(package_root / 'etc/modules-load.d/openrevo-ec.conf', 'openrevo_ec\n')
     write(package_root / 'etc/modprobe.d/openrevo-ec.conf', 'options openrevo_ec allow_writes=1\n')
+    for path, digest in inputs.items():
+        if sha256(path) != digest:
+            raise RuntimeError(f'Source changed during packaging: {path}; rebuild after edits finish')
+
+
+def build(version, driver_source, output_dir):
+    version = version_value(version)
+    output = Path(output_dir).resolve()
+    release_root = (ROOT / 'dist_release').resolve()
+    if release_root == ROOT or not release_root.is_relative_to(ROOT) or not output.is_relative_to(release_root):
+        raise ValueError('Output directory must be inside this project\'s dist_release directory')
+    output.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix='driver-package-', dir=output))
+    package_root = stage / 'root'
+    stage_payload(version, driver_source, package_root)
     control = package_root / 'DEBIAN'
     size = sum(path.stat().st_size for path in package_root.rglob('*') if path.is_file())
     write(control / 'control', f'''Package: {PACKAGE}
@@ -111,9 +121,6 @@ Description: DKMS source for the model-verified OpenRevo EC driver
     for script in ('postinst', 'prerm', 'postrm'):
         write(control / script, template(script + '.in', version), executable=True)
         subprocess.run(['sh', '-n', str(control / script)], check=True)
-    for path, digest in inputs.items():
-        if sha256(path) != digest:
-            raise RuntimeError(f'Source changed during packaging: {path}; rebuild after edits finish')
     package = output / f'{PACKAGE}_{version}_all.deb'
     staged_package = stage / package.name
     subprocess.run(['dpkg-deb', '--root-owner-group', '--build', str(package_root), str(staged_package)], check=True)
