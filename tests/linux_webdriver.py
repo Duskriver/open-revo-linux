@@ -7,12 +7,14 @@ only for an explicitly authorized current-value write/readback check.
 UI fixtures never write hardware or change login startup preferences.
 """
 import base64
+from contextlib import contextmanager
 from http.client import HTTPException
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import time
 import unittest
 from urllib.error import URLError
@@ -46,6 +48,17 @@ class LinuxWindow(unittest.TestCase):
         if not binary.is_file():
             raise RuntimeError("Build the GUI first: pnpm tauri build --debug --no-bundle")
         environment = os.environ.copy()
+        # Keep both native settings and WebKit localStorage away from the user's
+        # application data. Retain every run's directory for failure inspection.
+        output_root = ROOT / "test-results"
+        output_root.mkdir(exist_ok=True)
+        cls.test_home = Path(tempfile.mkdtemp(prefix="linux-webdriver-", dir=output_root))
+        print(f"Isolated XDG home and retained artifacts: {cls.test_home}", flush=True)
+        for name, child in [("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"),
+                            ("XDG_CACHE_HOME", "cache")]:
+            environment[name] = str(cls.test_home / child)
+        cls.config_directory = cls.test_home / "config" / "OpenRevo"
+        cls.config_file = cls.config_directory / "config.json"
         if environment.get("DISPLAY") and not environment.get("WAYLAND_DISPLAY"):
             # Virtual X servers have no DRI3/DMABUF device. Keep software
             # rendering local to the test process and its WebKit children.
@@ -66,6 +79,15 @@ class LinuxWindow(unittest.TestCase):
             raise RuntimeError("Could not start WebDriver")
         cls.addClassCleanup(lambda: request("DELETE", f"/session/{cls.session}"))
         cls.execute("document.documentElement.lang = 'zh-CN'; return true;")
+        cls.execute("""
+            window.__testHardwareCommands = [
+              'set_linux_power_profile', 'set_linux_platform_profile', 'set_linux_fan_boost',
+              'set_linux_power_limit', 'set_linux_oem_mode', 'set_linux_oem_fan_boost',
+              'set_linux_oem_cpu_limits', 'set_linux_oem_fan_curve', 'restore_linux_oem_fan_curve',
+              'set_linux_battery_limit', 'set_linux_backlight', 'set_autostart_enabled',
+              'renew_linux_control_lease'
+            ]; return true;
+        """)
         for _ in range(100):
             if "已连接本机" in cls.execute("return document.body.innerText;"):
                 break
@@ -83,8 +105,158 @@ class LinuxWindow(unittest.TestCase):
             cls.process.wait()
 
     @classmethod
-    def execute(cls, script):
-        return request("POST", f"/session/{cls.session}/execute/sync", {"script": script, "args": []})
+    def execute(cls, script, args=None):
+        return request("POST", f"/session/{cls.session}/execute/sync", {"script": script, "args": args or []})
+
+    def wait_js(self, expression, timeout=10):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = self.execute(f"return ({expression});")
+            if result:
+                return result
+            time.sleep(0.1)
+        self.fail(f"Timed out waiting for {expression}: " + self.execute("return document.body.innerText;"))
+
+    def navigate(self, name):
+        self.execute("[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === arguments[0]).click(); return true;", [name])
+
+    def click_text(self, text):
+        self.wait_js(f"[...document.querySelectorAll('button')].some(b => b.textContent === {json.dumps(text)} && !b.disabled)")
+        self.execute("[...document.querySelectorAll('button')].find(b => b.textContent === arguments[0]).click(); return true;", [text])
+
+    def native_ipc(self, command, arguments=None):
+        self.execute("""
+            window.__ipcResult = null;
+            window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1])
+              .then(value => window.__ipcResult = {ok:true, value})
+              .catch(rejection => window.__ipcResult = {ok:false, rejection});
+            return true;
+        """, [command, arguments or {}])
+        return self.wait_js("window.__ipcResult")
+
+    @contextmanager
+    def isolated_config_document(self):
+        """Temporarily archive only the two known files inside this test run."""
+        self.navigate("状态总览")
+        archive = self.test_home / f"config-case-{time.time_ns()}"
+        (archive / "before").mkdir(parents=True)
+        (archive / "after").mkdir()
+        self.config_directory.mkdir(parents=True, exist_ok=True)
+        names = ("config.json", "config.json.bak")
+        for name in names:
+            source = self.config_directory / name
+            if source.exists():
+                source.rename(archive / "before" / name)
+        try:
+            yield
+        finally:
+            self.navigate("状态总览")
+            for name in names:
+                current = self.config_directory / name
+                if current.exists():
+                    current.rename(archive / "after" / name)
+                previous = archive / "before" / name
+                if previous.exists():
+                    previous.rename(current)
+
+    @staticmethod
+    def valid_draft(first_duty=22, ramp_ms=300):
+        points = [{"temp": temp, "duty": duty} for temp, duty in
+                  zip([40, 50, 60, 68, 75, 82, 88, 95], [first_duty, 30, 45, 55, 65, 75, 85, 100])]
+        return {"cpu": points, "gpu": [dict(point) for point in points],
+                "isolated": True, "ramp_enabled": True, "ramp_ms": ramp_ms}
+
+    def install_curve_fixture(self, active=False):
+        self.execute("""
+            window.__curveReady = false;
+            const active = arguments[0], draft = arguments[1];
+            (async () => {
+              const snapshot = await window.__TAURI_INTERNALS__.invoke('get_linux_status');
+              snapshot.model = 'Fan curve UI fixture';
+              snapshot.ac_online = true;
+              snapshot.oem = {...snapshot.oem, available:true, writable:true, error:null,
+                mode:1, custom_power:false, fan_boost:false, dc_jack:true, fan_rpm:[2500,2600],
+                presets:[{pl1:35,pl2:35,pl4:70},{pl1:65,pl2:65,pl4:100},{pl1:90,pl2:90,pl4:100}],
+                limits:{pl1:35,pl2:35,pl4:70},
+                fan_curve:{supported:true, active, fault:false, applied:active ? draft : null}};
+              window.__curveFixture = snapshot;
+              window.__curveWrites = [];
+              window.__fixtureRenewals = 0;
+              window.__fixtureConfigReads = 0;
+              window.__fixtureConfigWrites = 0;
+              window.__statusHeld = false;
+              window.__statusWaiters = [];
+              window.__delaySave = false;
+              window.__releaseSave = null;
+              const nativeFetch = window.fetch;
+              window.__nativeFetch = nativeFetch;
+              const commands = ['get_linux_status', 'get_linux_config', 'save_linux_fan_curve_draft',
+                ...window.__testHardwareCommands];
+              const urls = Object.fromEntries(commands.map(c => [window.__TAURI_INTERNALS__.convertFileSrc(c,'ipc'),c]));
+              const response = value => new Response(JSON.stringify(value ?? null),
+                {headers:{'Content-Type':'application/json','Tauri-Response':'ok'}});
+              window.fetch = async (url, options) => {
+                const command = urls[String(url)];
+                if (!command) return nativeFetch(url, options);
+                if (command === 'get_linux_config') {
+                  window.__fixtureConfigReads++;
+                  return nativeFetch(url, options);
+                }
+                if (command === 'save_linux_fan_curve_draft') {
+                  window.__fixtureConfigWrites++;
+                  if (window.__delaySave) await new Promise(resolve => { window.__releaseSave = resolve; });
+                  return nativeFetch(url, options);
+                }
+                if (command === 'get_linux_status') {
+                  if (window.__statusHeld) await new Promise(resolve => window.__statusWaiters.push(resolve));
+                  snapshot.timestamp_ms = Date.now();
+                  return response(structuredClone(snapshot));
+                }
+                if (command === 'renew_linux_control_lease') {
+                  window.__fixtureRenewals++;
+                  return response(null);
+                }
+                const args = JSON.parse(options.body);
+                window.__curveWrites.push({command,args});
+                if (command === 'set_linux_oem_fan_curve') {
+                  snapshot.oem.fan_curve.active = true;
+                  snapshot.oem.fan_curve.applied = args.config;
+                } else if (command === 'restore_linux_oem_fan_curve') {
+                  snapshot.oem.fan_curve.active = false;
+                  snapshot.oem.fan_curve.applied = null;
+                } else {
+                  return new Response(JSON.stringify('Unexpected hardware write blocked by fixture'),
+                    {headers:{'Content-Type':'application/json','Tauri-Response':'error'}});
+                }
+                return response(null);
+              };
+              window.__curveReady = true;
+            })().catch(error => window.__curveFixtureError = String(error));
+            return true;
+        """, [active, self.valid_draft()])
+        self.wait_js("window.__curveReady")
+        self.execute("document.querySelector('[aria-label=刷新]').click(); return true;")
+        self.wait_for_status_fixture("Fan curve UI fixture")
+
+    @contextmanager
+    def curve_fixture(self, active=False):
+        self.install_curve_fixture(active)
+        try:
+            yield
+        finally:
+            self.clear_curve_fixture()
+
+    def clear_curve_fixture(self):
+        self.execute("""
+            window.__statusHeld = false;
+            for (const release of (window.__statusWaiters ?? []).splice(0)) release();
+            if (window.__releaseSave) { window.__releaseSave(); window.__releaseSave = null; }
+            if (window.__nativeFetch) window.fetch = window.__nativeFetch;
+            [...document.querySelectorAll('.linux-error button')].forEach(button => button.click());
+            document.querySelector('[aria-label=刷新]').click();
+            [...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === '状态总览').click();
+            return true;
+        """)
 
     def wait_for_status_fixture(self, model):
         # Installing the fetch interceptor does not finish an in-flight native
@@ -116,6 +288,12 @@ class LinuxWindow(unittest.TestCase):
         self.assertNotIn("运行出错", text)
         self.execute("[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === '系统').click(); return true;")
         self.assertIn("硬件支持状态", self.execute("return document.body.innerText;"))
+        self.assertTrue(self.execute("return !!document.querySelector('.linux-telemetry-sources');"))
+        self.execute("document.querySelector('.linux-telemetry-sources summary').click(); document.querySelector('.linux-telemetry-sources').scrollIntoView({block:'start'}); return true;")
+        self.assertGreater(self.execute("return document.querySelectorAll('.linux-telemetry-sources .quick-row').length;"), 0)
+        time.sleep(0.2)
+        (self.test_home / "telemetry-sources.png").write_bytes(
+            base64.b64decode(request('GET', f'/session/{self.session}/screenshot')))
         self.execute("[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === '状态总览').click(); return true;")
 
     def test_new_control_commands_reject_unknown_targets(self):
@@ -141,9 +319,11 @@ class LinuxWindow(unittest.TestCase):
 
     def test_theme_switch_and_restore(self):
         initial = self.execute("return document.documentElement.dataset.theme;")
+        self.assertEqual(self.execute("return getComputedStyle(document.documentElement).colorScheme;"), "dark")
         self.execute("document.querySelector('[aria-label=\"切换主题\"]').click(); return true;")
         time.sleep(0.15)
         self.assertNotEqual(self.execute("return document.documentElement.dataset.theme;"), initial)
+        self.assertEqual(self.execute("return getComputedStyle(document.documentElement).colorScheme;"), "dark")
         self.execute("document.querySelector('[aria-label=\"切换主题\"]').click(); return true;")
         time.sleep(0.15)
         self.assertEqual(self.execute("return document.documentElement.dataset.theme;"), initial)
@@ -247,10 +427,11 @@ class LinuxWindow(unittest.TestCase):
               window.__fixtureWrites = [];
               const nativeFetch = window.fetch;
               window.__nativeFetch = nativeFetch;
-              const commands = ['get_linux_status', 'set_linux_fan_boost', 'set_linux_power_limit', 'set_linux_platform_profile'];
+              const commands = ['get_linux_status', ...window.__testHardwareCommands];
               const urls = Object.fromEntries(commands.map(cmd => [window.__TAURI_INTERNALS__.convertFileSrc(cmd, 'ipc'), cmd]));
               const handle = async (command, args) => {
                 if (command === 'get_linux_status') return structuredClone(snapshot);
+                if (command === 'renew_linux_control_lease') return null;
                 if (command.startsWith('set_linux_')) {
                   window.__fixtureWrites.push({command, args});
                   if (command === 'set_linux_fan_boost') {
@@ -338,11 +519,13 @@ class LinuxWindow(unittest.TestCase):
               window.__oemSnapshot = snapshot;
               window.__oemWrites = [];
               window.__nativeFetch = window.fetch;
-              const commands = ['get_linux_status','set_linux_oem_mode','set_linux_oem_fan_boost','set_linux_oem_cpu_limits'];
+              const commands = ['get_linux_status', ...window.__testHardwareCommands];
               const urls = Object.fromEntries(commands.map(c => [window.__TAURI_INTERNALS__.convertFileSrc(c,'ipc'),c]));
               window.fetch = async (url, options) => {
                 const command = urls[String(url)];
                 if (!command) return window.__nativeFetch(url,options);
+                if (command === 'renew_linux_control_lease') return new Response('null',
+                  {headers:{'Content-Type':'application/json','Tauri-Response':'ok'}});
                 const args = JSON.parse(options.body);
                 if (command !== 'get_linux_status') {
                   window.__oemWrites.push({command,args});
@@ -419,78 +602,151 @@ class LinuxWindow(unittest.TestCase):
         self.fail('Native curve validation timed out')
 
     def test_ui_fan_curve_draft_apply_restore(self):
-        self.execute("""
-          window.__curveReady=false;
-          window.__previousCurveDraft=localStorage.getItem('openrevo_linux_fan_curve_v1');
-          localStorage.removeItem('openrevo_linux_fan_curve_v1');
-          (async()=>{
-            const snapshot=await window.__TAURI_INTERNALS__.invoke('get_linux_status');
-            snapshot.model='Fan curve UI fixture';
-            snapshot.ac_online=false; snapshot.oem.available=true; snapshot.oem.writable=true;
-            snapshot.oem.dc_jack=false; snapshot.oem.fan_boost=false;
-            snapshot.oem.fan_curve={supported:true, active:false, fault:false, applied:null};
-            window.__curveFixture=snapshot; window.__curveWrites=[];
-            window.__nativeFetch=window.fetch;
-            const cmds=['get_linux_status','set_linux_oem_fan_curve','restore_linux_oem_fan_curve'];
-            const urls=Object.fromEntries(cmds.map(c=>[window.__TAURI_INTERNALS__.convertFileSrc(c,'ipc'),c]));
-            window.fetch=async(url,options)=>{
-              const command=urls[String(url)]; if(!command) return window.__nativeFetch(url,options);
-              const args=JSON.parse(options.body);
-              if(command!=='get_linux_status'){
-                window.__curveWrites.push({command,args});
-                snapshot.oem.fan_curve.active=command==='set_linux_oem_fan_curve';
-                snapshot.oem.fan_curve.applied=command==='set_linux_oem_fan_curve'?args.config:null;
-              }
-              return new Response(JSON.stringify(command==='get_linux_status'?structuredClone(snapshot):null),
-                {headers:{'Content-Type':'application/json','Tauri-Response':'ok'}});
-            };
-            window.__curveReady=true;
-          })(); return true;
-        """)
-        try:
-            for _ in range(100):
-                if self.execute('return window.__curveReady;'): break
-                time.sleep(0.1)
-            self.assertTrue(self.execute('return window.__curveReady;'))
-            self.execute("document.querySelector('[aria-label=刷新]').click(); [...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.trim()==='电源管理').click(); return true;")
-            self.wait_for_status_fixture('Fan curve UI fixture')
-            for _ in range(100):
-                if self.execute("return !!document.querySelector('.shared-fan-editor');"): break
-                time.sleep(0.1)
-            self.execute("[...document.querySelectorAll('button')].find(b=>b.textContent==='原版默认曲线').click(); return true;")
+        with self.isolated_config_document(), self.curve_fixture():
+            previous_legacy = self.execute("return localStorage.getItem('openrevo_linux_fan_curve_v1');")
+            self.execute("window.__curveFixture.ac_online=false; window.__curveFixture.oem.dc_jack=false; document.querySelector('[aria-label=刷新]').click(); return true;")
+            self.navigate("电源管理")
+            self.click_text("原版默认曲线")
             self.assertTrue(self.execute("return [...document.querySelectorAll('button')].find(b=>b.textContent==='应用风扇曲线').disabled;"))
             self.execute("document.querySelector('[aria-label=\"联动 CPU 和 GPU 曲线\"]').click(); document.querySelector('[aria-label=\"CPU 40°C 增加转速\"]').click(); return true;")
-            self.execute("[...document.querySelectorAll('button')].find(b=>b.textContent==='保存曲线草稿').click(); return true;")
-            draft=self.execute("return JSON.parse(localStorage.getItem('openrevo_linux_fan_curve_v1'));")
-            self.assertEqual(draft['cpu'][0]['duty'],23)
-            self.assertEqual(draft['cpu'],draft['gpu'])
-            self.assertEqual(self.execute('return window.__curveWrites;'),[])
+            self.click_text("保存曲线草稿")
+            self.wait_js("document.body.innerText.includes('草稿已保存；启动时不会自动应用')")
+            saved = json.loads(self.config_file.read_text())
+            draft = saved['fan_curve_draft']
+            self.assertEqual(saved['version'], 1)
+            self.assertEqual(draft['cpu'][0]['duty'], 23)
+            self.assertEqual(draft['cpu'], draft['gpu'])
+            self.assertEqual(self.execute("return localStorage.getItem('openrevo_linux_fan_curve_v1');"), previous_legacy)
+            self.assertEqual(self.execute('return window.__curveWrites;'), [])
             self.execute("window.__curveFixture.ac_online=true; window.__curveFixture.oem.dc_jack=true; document.querySelector('[aria-label=刷新]').click(); return true;")
-            for _ in range(100):
-                if self.execute("return ![...document.querySelectorAll('button')].find(b=>b.textContent==='应用风扇曲线').disabled;"): break
-                time.sleep(0.1)
-            self.execute("[...document.querySelectorAll('button')].find(b=>b.textContent==='应用风扇曲线').click(); return true;")
-            for _ in range(100):
-                if self.execute("return ![...document.querySelectorAll('button')].find(b=>b.textContent==='恢复原风扇策略').disabled;"): break
-                time.sleep(0.1)
-            writes=self.execute('return window.__curveWrites;')
-            self.assertEqual(writes,[{'command':'set_linux_oem_fan_curve','args':{'config':draft}}])
-            self.execute("[...document.querySelectorAll('button')].find(b=>b.textContent==='恢复原风扇策略').click(); return true;")
-            for _ in range(100):
-                if self.execute('return window.__curveWrites.length;')==2: break
-                time.sleep(0.1)
-            self.assertEqual(self.execute('return window.__curveWrites[1].command;'),'restore_linux_oem_fan_curve')
-            for _ in range(100):
-                if self.execute("return [...document.querySelectorAll('button')].find(b=>b.textContent==='恢复原风扇策略').disabled && ![...document.querySelectorAll('button')].find(b=>b.textContent==='原版默认曲线').disabled;"): break
-                time.sleep(0.1)
+            self.click_text("应用风扇曲线")
+            self.wait_js("document.body.innerText.includes('上次应用已完成并读回确认')")
+            self.assertEqual(self.execute('return window.__curveWrites;'),
+                             [{'command': 'set_linux_oem_fan_curve', 'args': {'config': draft}}])
+            self.click_text("恢复原风扇策略")
+            self.wait_js("document.body.innerText.includes('已恢复自定义曲线启用前的风扇策略')")
+            self.assertEqual(self.execute('return window.__curveWrites[1].command;'), 'restore_linux_oem_fan_curve')
             self.execute("document.querySelector('.linux-fan-curve-panel').scrollIntoView({block:'start'}); return true;")
-            for _ in range(50):
-                if self.execute("return document.querySelector('.linux-fan-curve-panel').getBoundingClientRect().top < 120;"): break
-                time.sleep(0.1)
-            output=ROOT/'test-results/linux-fan-curve.png'
-            output.write_bytes(base64.b64decode(request('GET',f'/session/{self.session}/screenshot')))
-        finally:
-            self.execute("if(window.__nativeFetch)window.fetch=window.__nativeFetch; if(window.__previousCurveDraft===null)localStorage.removeItem('openrevo_linux_fan_curve_v1'); else localStorage.setItem('openrevo_linux_fan_curve_v1',window.__previousCurveDraft); document.querySelector('[aria-label=刷新]').click(); [...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.trim()==='状态总览').click(); return true;")
+            self.wait_js("document.querySelector('.linux-fan-curve-panel').getBoundingClientRect().top < 160")
+            output = ROOT / 'test-results/linux-fan-curve.png'
+            output.write_bytes(base64.b64decode(request('GET', f'/session/{self.session}/screenshot')))
+            # Capture the new settings controls as well as the editor above.
+            self.execute("document.querySelector('.linux-fan-curve-panel > .sys-sub-panel').scrollIntoView({block:'center'}); return true;")
+            time.sleep(0.2)
+            (self.test_home / 'curve-settings.png').write_bytes(
+                base64.b64decode(request('GET', f'/session/{self.session}/screenshot')))
+
+    def test_ui_legacy_curve_migration_preserves_source_without_applying(self):
+        with self.isolated_config_document(), self.curve_fixture():
+            previous = self.execute("return [localStorage.getItem('openrevo_linux_fan_curve_v1'), localStorage.getItem('openrevo_linux_fan_curve_v1_migrated')];")
+            legacy = json.dumps(self.valid_draft(first_duty=27, ramp_ms=500))
+            try:
+                self.execute("localStorage.setItem('openrevo_linux_fan_curve_v1', arguments[0]); localStorage.removeItem('openrevo_linux_fan_curve_v1_migrated'); return true;", [legacy])
+                self.navigate("电源管理")
+                self.wait_js("document.body.innerText.includes('旧草稿已迁移到应用配置')")
+                self.assertEqual(json.loads(self.config_file.read_text())['fan_curve_draft'], json.loads(legacy))
+                self.assertEqual(self.execute("return localStorage.getItem('openrevo_linux_fan_curve_v1');"), legacy)
+                self.assertEqual(self.execute("return localStorage.getItem('openrevo_linux_fan_curve_v1_migrated');"), 'true')
+                self.assertEqual(self.execute('return window.__fixtureConfigWrites;'), 1)
+                self.assertEqual(self.execute('return window.__curveWrites;'), [])
+                reads = self.execute('return window.__fixtureConfigReads;')
+                self.navigate("状态总览")
+                self.navigate("电源管理")
+                self.wait_js(f"window.__fixtureConfigReads > {reads} && !document.body.innerText.includes('正在读取草稿')")
+                self.assertEqual(self.execute("return document.querySelector('[aria-label=\"CPU 40°C 转速\"]').getAttribute('aria-valuenow');"), '27')
+                self.assertEqual(self.execute('return window.__fixtureConfigWrites;'), 1)
+                self.assertEqual(self.execute('return window.__curveWrites;'), [])
+                self.assertFalse((self.config_directory / 'config.json.bak').exists())
+            finally:
+                self.execute("['openrevo_linux_fan_curve_v1','openrevo_linux_fan_curve_v1_migrated'].forEach((key,index)=>{const value=arguments[0][index]; if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);}); return true;", [previous])
+
+    def test_native_configuration_validation_import_export_and_preservation(self):
+        with self.isolated_config_document(), self.curve_fixture():
+            self.assertEqual(self.native_ipc('get_linux_config'), {'ok': True, 'value': None})
+            invalid = self.valid_draft()
+            invalid['cpu'] = []
+            result = self.native_ipc('save_linux_fan_curve_draft', {'draft': invalid})
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['rejection']['code'], 'config_invalid')
+            self.assertFalse(self.config_file.exists())
+            result = self.native_ipc('import_linux_config', {'json': '{"version":2,"fan_curve_draft":null}'})
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['rejection']['code'], 'config_version')
+            self.assertFalse(self.config_file.exists())
+            draft = self.valid_draft(first_duty=25)
+            expected = {'version': 1, 'fan_curve_draft': draft}
+            self.assertEqual(self.native_ipc('save_linux_fan_curve_draft', {'draft': draft}), {'ok': True, 'value': expected})
+            export = self.native_ipc('export_linux_config')
+            self.assertTrue(export['ok'])
+            self.assertEqual(json.loads(export['value']), expected)
+            imported = {'version': 1, 'fan_curve_draft': self.valid_draft(first_duty=28, ramp_ms=1000)}
+            self.assertEqual(self.native_ipc('import_linux_config', {'json': json.dumps(imported)}), {'ok': True, 'value': imported})
+            self.assertEqual(self.native_ipc('get_linux_config'), {'ok': True, 'value': imported})
+            self.assertEqual(json.loads(self.config_file.read_text()), imported)
+            backup = self.config_directory / 'config.json.bak'
+            self.assertEqual(json.loads(backup.read_text()), expected)
+            preserved_backup = backup.read_bytes()
+            # Deliberately damaged/future files live only in this run's XDG home.
+            for content, code in [(b'{"version":2,"future_setting":true}', 'config_version'),
+                                  (b'{broken', 'config_invalid')]:
+                self.config_file.write_bytes(content)
+                for command, args in [('get_linux_config', {}),
+                                      ('save_linux_fan_curve_draft', {'draft': draft}),
+                                      ('import_linux_config', {'json': json.dumps(expected)})]:
+                    result = self.native_ipc(command, args)
+                    self.assertFalse(result['ok'])
+                    self.assertEqual(result['rejection']['code'], code)
+                    self.assertEqual(self.config_file.read_bytes(), content)
+                    self.assertEqual(backup.read_bytes(), preserved_backup)
+            self.assertEqual(self.execute('return window.__curveWrites;'), [])
+
+    def test_ui_delayed_save_is_seen_after_navigation(self):
+        with self.isolated_config_document(), self.curve_fixture():
+            self.assertTrue(self.native_ipc('save_linux_fan_curve_draft', {'draft': self.valid_draft()})['ok'])
+            self.navigate("电源管理")
+            self.wait_js("!!document.querySelector('[aria-label=\"CPU 40°C 增加转速\"]:not(:disabled)')")
+            self.execute("document.querySelector('[aria-label=\"CPU 40°C 增加转速\"]').click(); window.__delaySave=true; return true;")
+            self.click_text("保存曲线草稿")
+            self.wait_js("typeof window.__releaseSave === 'function'")
+            reads = self.execute('return window.__fixtureConfigReads;')
+            try:
+                self.navigate("状态总览")
+                self.navigate("电源管理")
+                self.wait_js("document.body.innerText.includes('正在读取草稿')")
+                self.assertEqual(self.execute('return window.__fixtureConfigReads;'), reads)
+                self.assertEqual(json.loads(self.config_file.read_text())['fan_curve_draft']['cpu'][0]['duty'], 22)
+            finally:
+                self.execute("window.__delaySave=false; if(window.__releaseSave)window.__releaseSave(); window.__releaseSave=null; return true;")
+            self.wait_js(f"window.__fixtureConfigReads > {reads} && !document.body.innerText.includes('正在读取草稿')")
+            self.assertEqual(self.execute("return document.querySelector('[aria-label=\"CPU 40°C 转速\"]').getAttribute('aria-valuenow');"), '23')
+            self.assertEqual(json.loads(self.config_file.read_text())['fan_curve_draft']['cpu'][0]['duty'], 23)
+            self.assertEqual(self.execute('return window.__curveWrites;'), [])
+
+    def test_ui_stale_status_stops_lease_and_allows_unconfirmed_restore(self):
+        with self.isolated_config_document(), self.curve_fixture(active=True):
+            self.navigate("电源管理")
+            self.wait_js("[...document.querySelectorAll('button')].some(b=>b.textContent==='恢复原风扇策略' && !b.disabled)")
+            self.wait_js("window.__fixtureRenewals > 0")
+            self.execute("window.__statusHeld=true; document.querySelector('[aria-label=刷新]').click(); return true;")
+            self.wait_js("window.__statusWaiters.length > 0")
+            self.wait_js("document.querySelector('.linux-status').dataset.stale === 'true'", timeout=13)
+            self.wait_js("document.body.innerText.includes('已停止续租')", timeout=4)
+            renewals = self.execute('return window.__fixtureRenewals;')
+            self.execute("window.__leaseStoppedAt=Date.now(); return true;")
+            self.wait_js("Date.now()-window.__leaseStoppedAt > 2300", timeout=4)
+            self.assertEqual(self.execute('return window.__fixtureRenewals;'), renewals)
+            self.assertTrue(self.execute("return [...document.querySelectorAll('button')].find(b=>b.textContent==='应用风扇曲线').disabled;"))
+            self.click_text("恢复原风扇策略")
+            self.wait_js("window.__curveWrites.length === 1")
+            self.assertEqual(self.execute('return window.__curveWrites[0].command;'), 'restore_linux_oem_fan_curve')
+            self.wait_js("document.body.innerText.includes('未能确认当前状态')", timeout=7)
+            self.assertFalse(self.execute("return [...document.querySelectorAll('button')].find(b=>b.textContent==='恢复原风扇策略').disabled;"))
+            self.assertNotIn('已恢复自定义曲线启用前的风扇策略', self.execute('return document.body.innerText;'))
+            self.execute("window.__statusHeld=false; for(const release of window.__statusWaiters.splice(0))release(); return true;")
+            self.wait_js("document.querySelector('.linux-status').dataset.stale === 'false'")
+            self.wait_js(f"window.__fixtureRenewals > {renewals}")
+            self.assertTrue(self.execute("return [...document.querySelectorAll('button')].find(b=>b.textContent==='恢复原风扇策略').disabled;"))
+            self.assertEqual(self.execute('return window.__curveWrites.length;'), 1)
 
     def test_refresh_and_capture(self):
         self.execute("document.querySelector('[aria-label=\"刷新\"]').click(); return true;")

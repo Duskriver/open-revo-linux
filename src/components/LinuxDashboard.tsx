@@ -12,6 +12,7 @@ import { LINUX_TABS } from './linux/navigation';
 import { LinuxPowerLimit, LinuxSnapshot } from '../types/linux';
 import { OemFanCurve } from './linux/OemFanCurve';
 import { OemCooling, OemModes, OemPower } from './linux/OemHardwareControls';
+import { readingDescription, TelemetrySources } from './linux/TelemetrySources';
 import type { PowerMode } from '../types/controls';
 
 const profileNames: Record<string, string> = {
@@ -76,7 +77,7 @@ function telemetry(status: LinuxSnapshot | null): HardwareTelemetry {
 }
 
 export default function LinuxDashboard() {
-  const { status, connectionError, error, busy, autostart, native, refresh, act, clearError, setAutostartEnabled } = useLinuxBackend();
+  const { status, connectionError, leaseError, stale, ageSeconds, error, busy, autostart, native, refresh, act, clearError, setAutostartEnabled } = useLinuxBackend();
   const [activeTab, setActiveTab] = useState('overview');
   const [theme, setTheme] = useState<'mono' | 'cyber'>(() => localStorage.getItem('openrevo_theme') === 'cyber' ? 'cyber' : 'mono');
 
@@ -93,7 +94,8 @@ export default function LinuxDashboard() {
     link.download = 'openrevo-linux-diagnostics.json'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const disabled = busy || !!connectionError || !status;
+  const disabled = busy || !!connectionError || !!leaseError || stale || !status;
+  const releaseDisabled = busy || !native;
   const platform = status?.controls.platform;
   const hasPlatform = !!platform?.available.length;
   const servicePresent = !!status?.power.available.length;
@@ -105,7 +107,7 @@ export default function LinuxDashboard() {
     ? status?.power.can_set !== false && status?.power.available.includes(profile === 'low-power' ? 'power-saver' : profile)
     : !!platform?.writable);
   const chooseProfile = (profile: string) => void act(hasPlatform ? 'set_linux_platform_profile' : 'set_linux_power_profile', { profile });
-  const oemProps = status ? { oem: status.oem, disabled, acOnline: status.ac_online === true, act } : null;
+  const oemProps = status ? { oem: status.oem, disabled, releaseDisabled, acOnline: status.ac_online === true, act } : null;
   const performance = status?.oem.available && oemProps ? <OemModes {...oemProps} /> : <RevCard title="性能释放模式" subtitle={hasPlatform ? `平台性能 · ${platform?.source}` : '系统性能档位'} icon={<Zap size={17} />}>
     <div className="linux-profile-options"><ModeSelector currentMode={mode} onSelectMode={id => chooseProfile(standardProfiles[id])}
       disabled={disabled} unlockBatteryLimit capabilities={{ power_modes: ['office', 'balance', 'turbo'] }}
@@ -123,7 +125,7 @@ export default function LinuxDashboard() {
       <div><div className="sys-row-label">{fan.name} · {value(fan.rpm, ' RPM')}</div>
         <div className="sys-row-desc">{fan.reason ?? (fan.boosted ? '强冷运行中，关闭后恢复原自动模式' : '由驱动自动调速')}</div></div>
       <div className="sys-row-controls"><button className={`toggle-btn ${fan.boosted ? 'active-cyan' : ''}`}
-        disabled={disabled || !fan.writable} aria-pressed={fan.boosted}
+        disabled={(fan.boosted ? releaseDisabled : disabled) || !fan.writable} aria-pressed={fan.boosted}
         onClick={() => void act('set_linux_fan_boost', { id: fan.id, enabled: !fan.boosted })}>{fan.boosted ? '恢复自动' : '一键强冷'}</button></div>
     </div>) : <div className="sys-sub-panel"><div className="sys-row-label">未检测到风扇控制驱动</div>
       <p className="sys-row-desc">当前固件继续管理散热。需要机型驱动公开风扇控制接口后，才能使用一键强冷。</p></div>}
@@ -167,9 +169,9 @@ export default function LinuxDashboard() {
         <button className="toggle-btn" onClick={exportDiagnostics} disabled={!status}><Download size={14} />导出诊断</button></>} />
     <div className="shell-viewport" data-slot="viewport">
       <div className="linux-page-stack">
-        {(error || connectionError) && <div className="linux-error" role="alert">{error || connectionError}
+        {(error || connectionError || leaseError) && <div className="linux-error" role="alert">{error || connectionError || `控制续租失败：${leaseError}`}
           {error && <button className="toggle-btn" onClick={clearError}>关闭</button>}</div>}
-        <div className="linux-status"><Activity size={14} />{connectionError ? '连接中断 · 以下为上次数据' : status ? '已连接本机 · 每 2 秒更新' : '正在连接本机硬件…'}
+        <div className="linux-status" data-stale={stale || !!connectionError}><Activity size={14} />{connectionError ? '连接中断 · 以下为上次数据' : stale ? `数据已过期 · ${ageSeconds} 秒未更新，暂停新调节，可恢复原策略` : status ? '已连接本机 · 每 2 秒更新' : '正在连接本机硬件…'}
           <span>{status?.model ?? '等待机型信息'}</span><span>{status?.ac_online == null ? '供电状态未知' : status.ac_online ? '外接电源' : '电池供电'}</span></div>
         <ModuleErrorBoundary key={activeTab} moduleName={activeTab} onNavigateToOverview={() => setActiveTab('overview')}>
           {activeTab === 'overview' && <div className="overview-slot-grid" data-slot="overview-grid">
@@ -192,7 +194,9 @@ export default function LinuxDashboard() {
             <div className="linux-capabilities">{status?.capabilities.map(c => <div key={c.id} className="linux-capability">
               <span className={c.available ? 'linux-available' : 'linux-muted'}>{c.available ? '● 已检测到' : '○ 未接入'}</span><strong>{c.name}</strong><p>{c.detail}</p>
             </div>)}</div></RevCard><RevCard title="全部传感器"><div className="linux-sensor-grid">{status?.sensors.map(s =>
-              <div className="linux-reading" key={s.id}><span>{s.device} · {s.label}</span><strong>{value(s.value, ` ${s.unit}`, 1)}</strong></div>)}</div></RevCard></div>}
+              <div className="sys-sub-panel" key={s.id}><div className="linux-reading"><span>{s.device} · {s.label}</span><strong>{value(s.value, ` ${s.unit}`, 1)}</strong></div>
+                {s.source && <p className="sys-row-desc linux-sensor-source">{readingDescription(s)}</p>}</div>)}</div>
+              <TelemetrySources status={status} /></RevCard></div>}
           {activeTab === 'sponsor' && <SponsorView />}
         </ModuleErrorBoundary>
       </div>

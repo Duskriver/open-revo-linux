@@ -9,6 +9,7 @@ import type { LinuxAction } from '../../lib/linuxApi';
 export interface OemControlProps {
   oem: LinuxOemSnapshot;
   disabled: boolean;
+  releaseDisabled: boolean;
   acOnline: boolean;
   act: LinuxAction;
 }
@@ -28,7 +29,7 @@ export function OemModes({ oem, disabled, acOnline, act }: OemControlProps) {
   </RevCard>;
 }
 
-export function OemCooling({ oem, disabled, act }: OemControlProps) {
+export function OemCooling({ oem, disabled, releaseDisabled, act }: OemControlProps) {
   const protectedBoost = !!oem.fan_curve?.fault && oem.fan_boost;
   return <RevCard title="风扇与散热控制" subtitle="原版 EC 强冷控制" icon={<Fan size={17} />}>
     {oem.fan_rpm.map((rpm, index) => <div className="linux-reading" key={index}>
@@ -37,7 +38,7 @@ export function OemCooling({ oem, disabled, act }: OemControlProps) {
     <div className="quick-row"><div><div className="sys-row-label">一键强冷</div>
       <div className="sys-row-desc">{oem.fan_curve?.fault ? '风扇策略恢复失败，恢复成功前无法关闭强冷。' : oem.fan_boost ? '两只风扇强冷运行中' : 'EC 根据温度自动调速'}</div></div>
       <button className={`toggle-btn ${oem.fan_boost ? 'active-cyan' : ''}`} aria-pressed={oem.fan_boost}
-        disabled={disabled || !oem.writable || protectedBoost} onClick={() => void act('set_linux_oem_fan_boost', { enabled: !oem.fan_boost })}>
+        disabled={(oem.fan_boost ? releaseDisabled : disabled) || !oem.writable || protectedBoost} onClick={() => void act('set_linux_oem_fan_boost', { enabled: !oem.fan_boost })}>
         {oem.fan_boost ? '恢复自动' : '一键强冷'}</button></div>
     <p className="linux-muted">退出或界面失联后恢复开启前的强冷状态。可在电源管理中编辑自定义曲线。</p>
   </RevCard>;

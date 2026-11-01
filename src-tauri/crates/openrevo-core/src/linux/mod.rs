@@ -6,6 +6,8 @@ pub use crate::hal::fan_curve::FanCurveConfig;
 use crate::hal::linux_ec::{LinuxEc, CpuLimits, OemSnapshot};
 mod power;
 mod sysfs;
+mod telemetry;
+pub use telemetry::{ReadingMetadata, ReadingStatus};
 pub use controls::{ControlsSnapshot, FanControl, PlatformProfile, PowerLimit};
 
 use serde::Serialize;
@@ -20,6 +22,8 @@ pub struct Sensor {
     pub kind: String,
     pub value: Option<f64>,
     pub unit: String,
+    #[serde(flatten)]
+    pub metadata: ReadingMetadata,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +66,7 @@ pub struct Snapshot {
     pub platform: &'static str,
     pub is_mock: bool,
     pub timestamp_ms: u128,
+    pub telemetry: std::collections::BTreeMap<String, ReadingMetadata>,
     pub model: Option<String>,
     pub vendor: Option<String>,
     pub board: Option<String>,
@@ -110,7 +115,6 @@ impl LinuxBackend {
     pub fn snapshot(&mut self) -> Snapshot {
         let mut snapshot = self.sysfs.snapshot(&mut self.previous_cpu);
         snapshot.power = self.power.snapshot();
-        self.controls.heartbeat();
         snapshot.controls = self.controls.snapshot();
         snapshot.oem = self.oem.snapshot();
         snapshot.capabilities = capabilities(&snapshot);
@@ -158,6 +162,14 @@ impl LinuxBackend {
     pub fn control_watchdog(&mut self) {
         self.controls.watchdog();
         self.oem.watchdog();
+    }
+
+    /// Renew the single GUI owner's control lease independently of telemetry.
+    /// Each backend expires old controls before accepting a new heartbeat.
+    pub fn renew_control_lease(&mut self) -> Result<(), String> {
+        let generic = self.controls.renew_control_lease();
+        let oem = self.oem.renew_control_lease();
+        generic.and(oem)
     }
 
     pub fn release_controls(&mut self) -> Result<(), String> {

@@ -2,7 +2,7 @@
 
 更新日期：2026-11-01（Asia/Shanghai）。本台账对应 [项目发展计划](linux-roadmap.md) 的 16 类功能，记录当前交付状态，不是未实现功能的支持承诺。
 
-初始代码基线：`e29c22402cab20bf701b9c87ce00bd67a02a524e`，应用版本 `0.9.3-linux.2`。上游功能参照沿用发展计划已核对的 `faintonce/open-revo/main` 提交 `b7d2b526e60cd04965eadab21e606bdb1e1aa56e`；上游 `dev` 不计入本次功能基线。后续修改应更新相关条目及证据，不因整体构建通过而自动提高硬件验证等级。
+初始代码基线：`e29c22402cab20bf701b9c87ce00bd67a02a524e`，应用版本 `0.9.3-linux.2`。上游功能参照沿用发展计划已核对的 `faintonce/open-revo/main` 提交 `b7d2b526e60cd04965eadab21e606bdb1e1aa56e`；该初始基线未计入上游 `dev`；后续已审查 `dev@4a9bee1` 并吸收部分基础设计，未继承其新增硬件支持声明。后续修改应更新相关条目及证据，不因整体构建通过而自动提高硬件验证等级。
 
 ## 记录规则
 
@@ -43,11 +43,11 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 
 ## 功能总表
 
-下表保留既有硬件基线；2026-11-01 的 M0 依赖升级后软件与窗口回归见 E-S04。该次回归不提高真实硬件 R/L 等级。
+下表保留既有硬件基线；2026-11-01 的 M0 依赖升级后软件与窗口回归见 E-S04。该次回归不提高真实硬件 R/L 等级。后续首批 dev 思路吸纳见 E-S05，同样不提升实机等级。
 
 | 稳定 ID | 功能 | 实现与当前可用性 | 软件验证 | 真实验证与范围 | 下一步 |
 | --- | --- | --- | --- | --- | --- |
-| ORL-F001 | CPU、内存、温度、风扇、电池监测 | 接口已实现；缺失值保持未知，传感器以实际发现为准 | 软件通过：E-S01、E-S02 | R1，HW-01；不代表每个传感器均存在或已校准。E-H01、E-H02 | 数据来源、采样时间、过期状态与短时历史 |
+| ORL-F001 | CPU、内存、温度、风扇、电池监测 | 接口已实现；标准传感器及部分顶层读数附来源/采样状态，静态身份缓存，界面标记过期数据 | 软件通过：E-S01、E-S02、E-S05 | R1，HW-01；不代表每个传感器均存在或已校准。E-H01、E-H02 | 补齐电池/背光/OEM字段元数据、短时历史与资源测量 |
 | ORL-F002 | 系统档位与 OEM 性能模式 | 接口已实现；系统服务/平台档位与 OEM 模式是独立控制层 | 软件通过：E-S01～E-S03 | OEM R2/L1，HW-01；系统档位仅有旧版 R2/L1，当前包真实写回跳过。E-H01～E-H03 | 保守带载与生命周期验证；组合场景说明 |
 | ORL-F003 | CPU 功耗、自定义曲线与强冷 | 接口已实现；OEM 功耗/强冷已有实测，曲线仍限软件验证 | 软件通过：E-S01～E-S03 | CPU 功耗、OEM 强冷 R2/L1；自定义曲线 R0/L0；均无 R3。HW-01，E-H01、E-H02 | 曲线实测、功耗效果、异常与生命周期；再加命名预设 |
 | ORL-F004 | 电池养护与限充 | 标准接口已实现，HW-01 未公开限充接口；OEM 限充未实现 | 软件通过：E-S01 | 限充 R0/L0；HW-01 当前不可用，STD 有条件可用。E-H01、E-C01 | 查明主机型协议与读回方式后决定 OEM 适配 |
@@ -70,7 +70,8 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 
 - 实现/权限：E-C01 使用 procfs、sysfs、hwmon、power_supply；E-C03 补充 OEM 双风扇读数。读取以普通用户实际可见接口为准，未知/故障值不回退模拟数据。GPU 专项边界见 ORL-F007。
 - 软件：E-S01 覆盖单位换算、坏值、缺失数据、CPU 差分、电池健康度等；E-S02 验证真实快照可到达原生窗口。真实 R1 来源为 E-H01/E-H02 的状态及风扇记录，不声称所有显示值均经外部仪器验证。
-- 下一步：为每个数据项记录来源与采样时间，区分连接失败、过期与设备未提供；历史缓存不能隐式增加独显轮询。
+- 后续实现（E-S05）：标准 hwmon 和 CPU/内存/供电/静态身份增加来源、有效采样时间及 ok/unavailable/fault/warming_up；静态身份成功缓存，缺失每 30 秒重试。界面按单调时钟判断十秒未更新为过期，暂停新调节并停止续租，恢复操作保留。
+- 下一步：补齐电池、背光、OEM 子字段元数据与历史缓存，实测进程开销；历史缓存不能隐式增加独显轮询。
 
 ### ORL-F002：系统档位与 OEM 模式
 
@@ -83,7 +84,7 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 - 实现/权限：E-C03/E-C04/E-C05 提供 OEM 三元功耗事务、八点风扇曲线、强冷及恢复。CPU 自定义值受出厂上限和组合约束；曲线要求供电、有效节点和保护条件。模式/功耗驻留，曲线/强冷有控制租约和释放语义。E-C02 另有已发现 hwmon/powercap 通道的通用控制，要求合法范围、SYS-W，不能作为主机型已有此通道的证据。
 - 软件：E-S01 覆盖帧编码、协议版本拒绝、曲线校验、通用风扇恢复与功耗边界；E-S02 覆盖草稿、应用/恢复、供电门禁和 UI 故障态；E-S03 覆盖 333 个风扇、416 个模式/功耗/强冷故障注入点和对应生命周期模型。
 - 实机：E-H01 只有 35/35/70 W 三元功耗读回、切回原模式以及五秒强冷后显式释放；E-H02 重验完整包的五秒强冷，读数 5085/5210 RPM 并恢复。均为 R2/L1，不证明 CPU 实际耗电、持续散热或完整生命周期。自定义风扇曲线没有真实应用通过记录，仍为 R0/L0。
-- 下一步：另行安排授权的保守带载、真实曲线、异常退出、租约过期、断开原装电源、休眠/唤醒和重启清单；记录每个子能力，不能整行统一升级。已有 localStorage 草稿不自动应用，迁移配置时保留此语义。
+- 下一步：另行安排授权的保守带载、真实曲线、异常退出、租约过期、断开原装电源、休眠/唤醒和重启清单；记录每个子能力，不能整行统一升级。草稿已迁入 XDG 配置，旧 localStorage 副本保留，导入/保存均不自动应用；新实现的实机恢复行为仍待独立复验。
 
 ### ORL-F004：电池养护与限充
 
@@ -147,7 +148,8 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 ### ORL-F015：自动化规则与场景切换
 
 - 证据/边界：E-C05 只有手动曲线草稿，E-C07 只有登录自启和单客户端控制；无命名场景、规则执行器、控制 CLI 或独立后台 agent。现有内核保护与看门狗不是通用自动化规则。
-- 下一步：先建立 XDG 配置迁移、保存/应用区别、结构化能力/错误、事件和控制所有权；再做可暂停、可解释的电源/温度规则。诊断读取不能替已退出的控制者续租，多客户端行为需单独验收。
+- 后续基础（E-C09、E-S05）：已提供曲线草稿 v1 的 XDG 保存、迁移、导入导出和备份；状态查询不续租，显式主窗口续租独立执行。配置错误具有 code/message，硬件命令错误仍以字符串为主。
+- 下一步：命名场景、结构化能力/硬件错误、事件和控制所有权；再做可暂停、可解释的规则。当前是单 GUI 所有者，进程内配置串行不等于跨进程事务，多客户端行为需单独验收。
 
 ### ORL-F016：用户插件与机型配置
 
@@ -168,10 +170,12 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 | E-C06 | [Linux 页面](../src/components/LinuxDashboard.tsx)、[导航](../src/components/linux/navigation.tsx) | 实际展示能力及 GPU/RGB/BLE/插件占位；页面不构成后端实现 |
 | E-C07 | [Tauri 宿主](../src-tauri/src/linux.rs)、[IPC 命令](../src-tauri/src/linux/commands.rs)、[前端命令契约](../src/lib/linuxApi.ts)、[状态 hook](../src/hooks/useLinuxBackend.ts) | 活跃命令表、托盘、自启、轮询与写后刷新；无隐藏的旧 Windows 插件运行时 |
 | E-C08 | [插件历史手册](OpenRevo_第三方插件开发手册.md)、[机型配置历史指南](models_customization_guide.md)、[Tauri 配置](../src-tauri/tauri.conf.json)、[默认能力](../src-tauri/capabilities/default.json) | 旧接口不可用声明及后续扩展隔离需要审查的当前边界 |
+| E-C09 | [XDG 配置核心](../src-tauri/crates/openrevo-core/src/config.rs)、[配置 IPC](../src-tauri/src/linux/config_commands.rs)、[草稿 UI](../src/components/linux/OemFanCurve.tsx) | v1 schema、原子保存、前一有效备份、导入导出、保留旧草稿；无自动硬件应用 |
 | E-S01 | [sysfs 单元测试](../src-tauri/crates/openrevo-core/src/linux/sysfs/tests.rs)、[标准控制测试](../src-tauri/crates/openrevo-core/src/linux/controls/tests.rs)、E-C02/E-C03 内嵌测试；通过摘要见 [当前版本说明](linux-release-notes.md#验证边界) 和 [发展计划](linux-roadmap.md#当前基础与主要差距) | 基线 `pnpm check`：34 项 Python、41 项核心测试、TypeScript 与字典门禁通过。数量是当时记录，不是后续版本的固定要求 |
 | E-S02 | [原生窗口测试](../tests/linux_webdriver.py)、[Linux CI](../.github/workflows/linux.yml)；通过摘要见 [重构记录](linux-refactor.md#当前软件验证结果)、E-H02 | 原生窗口、非法 IPC、主题/导航、调校/曲线夹具；10 项通过、2 项真实系统/平台写入跳过，夹具不写真实硬件 |
 | E-S03 | [风扇故障注入](../drivers/openrevo-ec/test_fan_transaction.c)、[模式/功耗/强冷故障注入](../drivers/openrevo-ec/test_control_transaction.c)、[生成器测试](../drivers/openrevo-ec/test_generate_header.py)；结果见 [重构记录](linux-refactor.md#当前软件验证结果) 与发展计划 | 基线 333、416 个事务故障注入点及 6 项生成器测试通过；软件生命周期模型不等于真实断电/休眠测试 |
 | E-S04 | [M0 实施验证](m0-validation.md)；本地日志及产物：`dist_release/m0-baseline-20261101-190159/` | 依赖与工具链升级后 34 项 Python、41 项核心、TypeScript、字典、驱动故障注入、workspace Clippy、完整包校验通过；调试与包内生产应用窗口各 10 项通过、2 项真实写回跳过 |
+| E-S05 | [上游 dev 首批吸纳验证](linux-refactor.md#上游-dev-首批吸纳2026-11-01)；本地 `dist_release/upstream-foundation-20261101-yu_5s7ko/` | 基于 `40b88ce` 的未发布工作区：34 项 Python、67 项核心、字典/TypeScript/Clippy、驱动故障注入、完整包校验通过；包内应用窗口 14 项通过、2 项真实写入跳过。不提高硬件 R/L 等级 |
 | E-H01 | [功能与机型范围](linux-port.md#已有实机记录与新驱动状态)、[2026-11-01 事务回归](linux-refactor.md#本机部署与事务回归2026-11-01)；本地原始报告：`dist_release/linux-refactor-20261101/hardware-verification.json`、`ac-hardware-verification.json`（同目录） | 合并完整包前的办公、均衡/狂暴、35/35/70 W、短时强冷及显式恢复；范围 HW-01，无负载/真实曲线/重启/休眠结论 |
 | E-H02 | [完整包验证摘要](linux-release-notes.md#验证边界)；本地原始报告：`dist_release/full-install-20261101-pc9xeldp/verification-report.json` | `0.9.3-linux.2` 本机安装、设备权限、10 项原生窗口、5 秒强冷及恢复、桌面启动；原模块源码标识一致无需重载，不是重启或新模块替换的实测 |
 | E-H03 | 本地历史报告：`dist_release/local-verification-20261101/final-verification.json`、`power-profile-test.json`、`brightness-test.json`、`brightness-service-test.json`（后三项同目录） | `0.9.3-linux.1` 系统档位 GUI 切换/恢复成功；屏幕亮度 logind API 读回/恢复成功，同次 GUI 操作未改变硬件。不得归为当前版 GUI 全流程通过 |

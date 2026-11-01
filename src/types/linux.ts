@@ -1,5 +1,12 @@
 import type { FanCurvePoint } from './controls';
-export interface LinuxSensor {
+export interface ReadingMetadata {
+  source: string;
+  /** Last successful sample; absent for unavailable, faulted or warming-up readings. */
+  sampled_at_ms: number | null;
+  status: 'ok' | 'unavailable' | 'fault' | 'warming_up';
+}
+
+export interface LinuxSensor extends ReadingMetadata {
   id: string;
   device: string;
   label: string;
@@ -28,6 +35,7 @@ export interface LinuxSnapshot {
   platform: 'linux';
   is_mock: false;
   timestamp_ms: number;
+  telemetry: Record<string, ReadingMetadata>;
   model: string | null;
   vendor: string | null;
   board: string | null;
@@ -103,4 +111,9 @@ export interface LinuxFanCurveConfig {
   isolated: boolean;
   ramp_enabled: boolean;
   ramp_ms: number;
+}
+
+export interface LinuxAppConfig {
+  version: 1;
+  fan_curve_draft: LinuxFanCurveConfig | null;
 }

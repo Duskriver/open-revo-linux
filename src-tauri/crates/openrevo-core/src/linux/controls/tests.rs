@@ -137,6 +137,64 @@ fn watchdog_and_drop_restore_fans_without_frontend() {
 }
 
 #[test]
+fn snapshots_do_not_renew_an_expired_fan_lease() {
+    let (root, mut controls) = fixture();
+    fan(root.path());
+    controls.set_fan_boost("hwmon0/pwm1_enable", true).unwrap();
+    let expired = Instant::now() - Duration::from_secs(1);
+    controls.deadline = Some(expired);
+    for _ in 0..3 {
+        assert!(controls.snapshot().fans[0].boosted);
+        assert_eq!(controls.deadline, Some(expired));
+    }
+    controls.watchdog();
+    assert_eq!(
+        number(root.path().join("class/hwmon/hwmon0/pwm1_enable")),
+        Some(3)
+    );
+    assert!(controls.boosted.is_empty());
+}
+
+#[test]
+fn explicit_renewal_extends_only_an_unexpired_fan_lease() {
+    let (root, mut controls) = fixture();
+    fan(root.path());
+    controls.set_fan_boost("hwmon0/pwm1_enable", true).unwrap();
+    let old_deadline = Instant::now() + Duration::from_secs(5);
+    controls.deadline = Some(old_deadline);
+    controls.renew_control_lease().unwrap();
+    assert!(controls.deadline.unwrap() > old_deadline);
+    assert_eq!(
+        number(root.path().join("class/hwmon/hwmon0/pwm1_enable")),
+        Some(0)
+    );
+
+    controls.deadline = Some(Instant::now() - Duration::from_secs(1));
+    controls.renew_control_lease().unwrap();
+    assert_eq!(
+        number(root.path().join("class/hwmon/hwmon0/pwm1_enable")),
+        Some(3)
+    );
+    assert!(controls.boosted.is_empty());
+    assert_eq!(controls.deadline, None);
+}
+
+#[test]
+fn failed_expiry_restoration_is_not_hidden_by_a_new_heartbeat() {
+    let (root, mut controls) = fixture();
+    fan(root.path());
+    controls.set_fan_boost("hwmon0/pwm1_enable", true).unwrap();
+    let expired = Instant::now() - Duration::from_secs(1);
+    controls.deadline = Some(expired);
+    let path = root.path().join("class/hwmon/hwmon0/pwm1_enable");
+    fs::rename(&path, root.path().join("removed-attribute")).unwrap();
+    assert!(controls.renew_control_lease().is_err());
+    assert_eq!(controls.deadline, Some(expired));
+    assert!(controls.fan_error.is_some());
+    assert!(!path.exists());
+}
+
+#[test]
 fn vanished_fan_is_not_recreated_on_restore() {
     let (root, mut controls) = fixture();
     fan(root.path());

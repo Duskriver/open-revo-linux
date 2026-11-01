@@ -1,5 +1,6 @@
 //! Linux Tauri host. The GUI runs as the desktop user, never as root.
 mod commands;
+mod config_commands;
 
 use commands::LinuxState;
 use openrevo_core::linux::LinuxBackend;
@@ -30,6 +31,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(Arc::new(Mutex::new(LinuxBackend::new())))
+        .manage(Arc::new(openrevo_core::config::ConfigStore::new()) as config_commands::ConfigState)
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -40,6 +42,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::platform::get_platform,
             commands::get_linux_status,
+            config_commands::get_linux_config,
+            config_commands::save_linux_fan_curve_draft,
+            config_commands::export_linux_config,
+            config_commands::import_linux_config,
+            commands::renew_linux_control_lease,
             commands::set_linux_power_profile,
             commands::set_linux_platform_profile,
             commands::set_linux_fan_boost,

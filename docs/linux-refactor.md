@@ -62,3 +62,38 @@
 接电后系统供电和 EC 圆口供电标志均为真。额外验证均衡与狂暴模式分别读取出厂 65/65/100 W、90/90/100 W，自定义功耗读取 35/35/70 W；随后显式恢复测试前均衡模式、关闭自定义功耗和强冷，出厂表保持不变。未执行压力负载、真实自定义风扇曲线、重启或休眠测试，不能据此宣称实际耗电或带载散热已验证。
 
 本地可审阅产物在 `dist_release/linux-refactor-20261101/`，根目录两个 `.deb` 与 `SHA256SUMS` 为最终版本；初次失败包和诊断包分别保存在 `initial-attempt/`、`diagnostic-attempt/`。`hardware-verification.json`、`ac-hardware-verification.json`、`final-driver-deployment.json`、`installed-app-verification.json`、`final-installed-window-fixture-fixed.log` 和内核编译报告记录当前结果。旧模块、配置及旧应用文件保存在 `rollback/`，未永久删除。本地安装包、日志和回退备份不纳入 Git 提交；本轮不创建新版本标签或公开 Release。
+
+
+## 上游 dev 首批吸纳（2026-11-01）
+
+基线为本仓 `40b88ce`，上游比较范围为 `b7d2b52..4a9bee1`。本轮是未发布工作区改动，应用发行版本字段仍为 `0.9.3-linux.2`，不代表已发布包或系统已安装应用自动获得这些行为。
+
+| 范围 | 实施与边界 |
+| --- | --- |
+| 状态与租约 | `get_linux_status` 不续租、不发送曲线心跳；主窗口独立调用 `renew_linux_control_lease`。迟到心跳先处理超时恢复；故障/失败不延长租约。仍为单 GUI 所有者，尚无多客户端控制权协议 |
+| 过期与恢复 | UI 以单调时钟判断十秒无新状态为过期，停止续租并暂停新调节；显式恢复保留。写后等待新状态最多五秒，未确认时不显示确认成功，避免挂起的轮询永久锁住操作界面 |
+| 遥测 | 标准传感器、CPU/内存/供电及机型身份增加 `source`、`sampled_at_ms`、`status`。故障/缺失/预热没有有效采样时间；静态缓存保留首次成功时间。电池、背光和 OEM 子字段元数据尚待补齐 |
+| 缓存 | DMI/BIOS/内核/CPU 型号成功后按进程缓存，失败三十秒后重试；供电、权限、温度、频率、内存及设备枚举保持实时。没有引入拓扑缓存或宣称已测得功耗收益 |
+| 配置 | 自有 XDG 配置 v1，仅含风扇曲线草稿；原子写、上一有效备份、64 KiB 上限、版本与曲线校验。旧 localStorage 迁移保留副本，导入/保存不应用硬件；拒绝符号链接路径，保证同进程串行，尚无跨进程事务 |
+| 界面 | 系统页可查看来源与采样状态，深色原生控件跟随 Mono/Cyber。保存/导入与导航后的加载串行，避免旧草稿覆盖在途保存 |
+
+设计参考为上游 [TTL 查询缓存](https://github.com/faintonce/open-revo/commit/6a81079)、[宿主持久化与快捷键](https://github.com/faintonce/open-revo/commit/489629c)、[深色原生控件](https://github.com/faintonce/open-revo/commit/463a4a0)；本轮未整体移植上游插件宿主。GM5HG7A 能效预设、OEM 限充协议、RGB、NVML、快捷键及 SDK 留在后续工作中。
+
+交叉审查修复了故障曲线续租伪成功、过期状态下恢复入口被禁用、跨导航在途保存竞态。内核协议、驱动源码、白名单与出厂功耗边界未改变；没有安装包、替换/加载模块或真实调节硬件。本轮测试不提高 R/L 实机等级。
+
+
+本轮验证结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| `pnpm check` | 硬件字典、34 项 Python、67 项 Rust 核心测试及 TypeScript 通过；相对基线新增 26 项核心测试 |
+| workspace Clippy 全目标 | `--locked -- -D warnings` 通过 |
+| 驱动离线事务测试 | 6 项生成器测试、333/416 个故障注入点及生命周期场景通过；驱动源码未改 |
+| 前端及 Tauri 构建 | 生产前端、原生调试应用、release 与完整 Debian 包构建通过 |
+| 完整包验证 | 包内容及安装元数据校验通过；未执行安装维护脚本 |
+| 包内生产应用窗口 | 16 项中 14 项通过、2 项真实系统/平台档位写回跳过。覆盖迁移保留原副本、无自动应用、导入导出、坏配置/新版本拒写、跨导航延迟保存、状态过期停续租、恢复入口及确认超时、Mono/Cyber 深色原生控件 |
+| 静态与视觉复核 | `git diff --check`、文档本地链接及测试脚本编译通过；来源详情和草稿工具栏截图已检查 |
+
+窗口回归使用 `OPENREVO_TEST_HARDWARE_WRITES=0`、隔离 D-Bus/Xvfb，并将 XDG config/data/cache 放在项目内独立测试目录；配置 IPC 真正读写测试目录，硬件写入夹具不访问设备。首轮有一项测试辅助函数将业务 `error` 对象误判为 WebDriver 协议错误，修正封装后全套通过，未因此修改产品行为。原生窗口日志仍有桌面服务/GTK 环境提示，不据此扩大 Wayland、托盘或实机控制支持范围。
+
+本地验证目录：`dist_release/upstream-foundation-20261101-yu_5s7ko/`，包含 `check.log`、`clippy.log`、`driver-tests.log`、`build.log`、`window.log`、首轮测试失败摘录、`checks.json`、源码变化清单及完整包。最终窗口隔离目录为 `test-results/linux-webdriver-h2eikq0w/`，含 `telemetry-sources.png`、`curve-settings.png` 及逐用例配置归档。已有发行目录根部的包保持不变；上述验证完成时尚未提交或推送；本轮未创建 Tag 或发布。

@@ -336,21 +336,35 @@ impl Controls {
         }
     }
 
-    pub fn heartbeat(&mut self) {
+    fn heartbeat(&mut self) {
         if !self.boosted.is_empty() {
             self.deadline = Some(Instant::now() + Duration::from_secs(10));
         }
     }
 
-    pub fn watchdog(&mut self) {
+    fn expire_control_lease(&mut self) -> Result<(), String> {
         if self
             .deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
             if let Err(error) = self.restore_fans() {
-                self.fan_error = Some(error);
+                self.fan_error = Some(error.clone());
+                return Err(error);
             }
         }
+        Ok(())
+    }
+
+    pub fn renew_control_lease(&mut self) -> Result<(), String> {
+        // A late GUI heartbeat must not revive expired manual control, including
+        // when restoration failed and the watchdog still needs to retry it.
+        self.expire_control_lease()?;
+        self.heartbeat();
+        Ok(())
+    }
+
+    pub fn watchdog(&mut self) {
+        let _ = self.expire_control_lease();
     }
 
     fn power_entries(&self) -> Vec<(PowerLimit, PathBuf)> {

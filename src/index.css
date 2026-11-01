@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   /* ==========================================================================
      OPENREVO DESIGN SYSTEM TOKENS (V1 STANDARD ARCHITECTURE)
      ========================================================================== */
@@ -67,6 +68,20 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --font-mech: 'Chakra Petch', sans-serif;
+}
+
+.linux-status[data-stale="true"] {
+  color: var(--status-warn);
+}
+
+.linux-sensor-source,
+.linux-telemetry-sources .sys-row-desc {
+  overflow-wrap: anywhere;
+}
+
+.linux-telemetry-sources summary {
+  cursor: pointer;
+  color: var(--text-primary);
 }
 
 * {

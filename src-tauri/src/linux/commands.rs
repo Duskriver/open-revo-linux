@@ -24,6 +24,19 @@ pub(super) async fn get_linux_status(state: State<'_, LinuxState>) -> Result<Sna
 }
 
 #[tauri::command]
+pub(super) async fn renew_linux_control_lease(
+    window: tauri::WebviewWindow,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
+    // This is a single-GUI lease, not a grant to diagnostic readers or future
+    // secondary windows. The label comes from Tauri, never from IPC arguments.
+    if window.label() != "main" {
+        return Err("只有主窗口可以续期硬件控制".into());
+    }
+    with_backend(&state, LinuxBackend::renew_control_lease).await
+}
+
+#[tauri::command]
 pub(super) async fn set_linux_power_profile(
     profile: String,
     state: State<'_, LinuxState>,
@@ -61,27 +74,46 @@ pub(super) async fn set_linux_power_limit(
 }
 
 #[tauri::command]
-pub(super) async fn set_linux_oem_mode(mode: u8, state: State<'_, LinuxState>) -> Result<(), String> {
+pub(super) async fn set_linux_oem_mode(
+    mode: u8,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
     with_backend(&state, move |backend| backend.set_oem_mode(mode)).await
 }
 
 #[tauri::command]
-pub(super) async fn set_linux_oem_fan_boost(enabled: bool, state: State<'_, LinuxState>) -> Result<(), String> {
+pub(super) async fn set_linux_oem_fan_boost(
+    enabled: bool,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
     with_backend(&state, move |backend| backend.set_oem_fan_boost(enabled)).await
 }
 
 #[tauri::command]
-pub(super) async fn set_linux_oem_cpu_limits(pl1: u8, pl2: u8, pl4: u8, state: State<'_, LinuxState>) -> Result<(), String> {
-    with_backend(&state, move |backend| backend.set_oem_cpu_limits(pl1, pl2, pl4)).await
+pub(super) async fn set_linux_oem_cpu_limits(
+    pl1: u8,
+    pl2: u8,
+    pl4: u8,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
+    with_backend(&state, move |backend| {
+        backend.set_oem_cpu_limits(pl1, pl2, pl4)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(super) async fn set_linux_oem_fan_curve(config: FanCurveConfig, state: State<'_, LinuxState>) -> Result<(), String> {
+pub(super) async fn set_linux_oem_fan_curve(
+    config: FanCurveConfig,
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
     with_backend(&state, move |backend| backend.set_oem_fan_curve(config)).await
 }
 
 #[tauri::command]
-pub(super) async fn restore_linux_oem_fan_curve(state: State<'_, LinuxState>) -> Result<(), String> {
+pub(super) async fn restore_linux_oem_fan_curve(
+    state: State<'_, LinuxState>,
+) -> Result<(), String> {
     with_backend(&state, |backend| backend.restore_oem_fan_curve()).await
 }
 

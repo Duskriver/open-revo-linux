@@ -1,11 +1,77 @@
-use super::{Backlight, Battery, PowerProfiles, Sensor, Snapshot};
+use super::{Backlight, Battery, PowerProfiles, ReadingMetadata, ReadingStatus, Sensor, Snapshot};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+const IDENTITY_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Clone)]
+struct Reading<T> {
+    value: Option<T>,
+    metadata: ReadingMetadata,
+}
+
+impl<T> Reading<T> {
+    fn from_result(source: String, result: Result<T, ReadingStatus>) -> Self {
+        let (value, status) = match result {
+            Ok(value) => (Some(value), ReadingStatus::Ok),
+            Err(status) => (None, status),
+        };
+        let sampled_at_ms = value.as_ref().map(|_| super::now_ms());
+        Self {
+            value,
+            metadata: ReadingMetadata {
+                source,
+                sampled_at_ms,
+                status,
+            },
+        }
+    }
+
+    fn derive<U>(&self, parse: impl FnOnce(&T) -> Result<U, ReadingStatus>) -> Reading<U> {
+        let result = self
+            .value
+            .as_ref()
+            .ok_or(self.metadata.status)
+            .and_then(parse);
+        let mut derived = Reading::from_result(self.metadata.source.clone(), result);
+        if derived.value.is_some() {
+            derived.metadata.sampled_at_ms = self.metadata.sampled_at_ms;
+        }
+        derived
+    }
+}
+
+fn observed_text(path: impl AsRef<Path>, source: String) -> Reading<String> {
+    let result = fs::read_to_string(path)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => ReadingStatus::Unavailable,
+            _ => ReadingStatus::Fault,
+        })
+        .and_then(|value| {
+            let value = value.trim().to_owned();
+            if value.is_empty() {
+                Err(ReadingStatus::Unavailable)
+            } else {
+                Ok(value)
+            }
+        });
+    Reading::from_result(source, result)
+}
+
+struct CachedIdentity {
+    reading: Reading<String>,
+    attempted_at: Instant,
+}
 
 pub(super) struct Sysfs {
     sys: PathBuf,
     proc: PathBuf,
+    // This cache belongs to the process backend, never to a shared disk file.
+    identity: RefCell<BTreeMap<&'static str, CachedIdentity>>,
 }
 
 fn read(path: impl AsRef<Path>) -> Option<String> {
@@ -51,53 +117,164 @@ fn writable(path: &Path) -> bool {
 
 impl Sysfs {
     pub fn new(sys: PathBuf, proc: PathBuf) -> Self {
-        Self { sys, proc }
+        Self {
+            sys,
+            proc,
+            identity: RefCell::new(BTreeMap::new()),
+        }
     }
 
     pub fn snapshot(&self, previous_cpu: &mut Option<(u64, u64)>) -> Snapshot {
-        let cpuinfo = read(self.proc.join("cpuinfo")).unwrap_or_default();
-        let cpu = cpuinfo.lines().find_map(|line| {
-            let (key, value) = line.split_once(':')?;
-            (key.trim() == "model name").then(|| value.trim().to_owned())
+        self.snapshot_at(previous_cpu, Instant::now())
+    }
+
+    fn cached_identity(
+        &self,
+        key: &'static str,
+        now: Instant,
+        read_value: impl FnOnce() -> Reading<String>,
+    ) -> Reading<String> {
+        let mut cache = self.identity.borrow_mut();
+        if let Some(cached) = cache.get(key) {
+            if cached.reading.value.is_some()
+                || now.saturating_duration_since(cached.attempted_at) < IDENTITY_RETRY_INTERVAL
+            {
+                return cached.reading.clone();
+            }
+        }
+        let reading = read_value();
+        cache.insert(
+            key,
+            CachedIdentity {
+                reading: reading.clone(),
+                attempted_at: now,
+            },
+        );
+        reading
+    }
+
+    fn snapshot_at(&self, previous_cpu: &mut Option<(u64, u64)>, now: Instant) -> Snapshot {
+        // cpuinfo contains both static identity and changing frequencies. Only the
+        // model name is cached; the source is still read on each live sample.
+        let cpuinfo = observed_text(self.proc.join("cpuinfo"), "/proc/cpuinfo".into());
+        let cpu = self.cached_identity("cpu", now, || {
+            cpuinfo.derive(|info| {
+                info.lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        (key.trim() == "model name" && !value.trim().is_empty())
+                            .then(|| value.trim().to_owned())
+                    })
+                    .ok_or(ReadingStatus::Unavailable)
+            })
         });
-        let cpu_frequency_mhz = {
-            let mhz: Vec<_> = cpuinfo
-                .lines()
-                .filter_map(|line| {
-                    let (key, value) = line.split_once(':')?;
-                    (key.trim() == "cpu MHz")
-                        .then(|| value.trim().parse::<f64>().ok())
-                        .flatten()
-                })
-                .filter(|n| n.is_finite() && *n >= 0.0)
-                .collect();
-            (!mhz.is_empty()).then(|| mhz.iter().sum::<f64>() / mhz.len() as f64)
-        };
-        let cpu_usage = read(self.proc.join("stat")).and_then(|s| cpu_usage(&s, previous_cpu));
-        let (memory_used_gib, memory_total_gib) =
-            memory(&read(self.proc.join("meminfo")).unwrap_or_default());
+        let cpu_frequency_mhz = cpuinfo.derive(|info| cpu_frequency(info));
+        let stat = observed_text(self.proc.join("stat"), "/proc/stat".into());
+        let cpu_usage = stat.derive(|text| {
+            if cpu_counters(text).is_none() {
+                *previous_cpu = None;
+                return Err(ReadingStatus::Fault);
+            }
+            cpu_usage(text, previous_cpu).ok_or(ReadingStatus::WarmingUp)
+        });
+        if stat.value.is_none() {
+            *previous_cpu = None;
+        }
+        let meminfo = observed_text(self.proc.join("meminfo"), "/proc/meminfo".into());
+        let memory_total_gib = meminfo
+            .derive(|info| memory_value(info, "MemTotal").map(|value| value as f64 / 1_048_576.0));
+        let memory_used_gib = meminfo.derive(|info| {
+            let total = memory_value(info, "MemTotal")?;
+            let available = memory_value(info, "MemAvailable")?;
+            total
+                .checked_sub(available)
+                .map(|value| value as f64 / 1_048_576.0)
+                .ok_or(ReadingStatus::Fault)
+        });
         let dmi = self.sys.join("class/dmi/id");
-        let ac_values: Vec<_> = entries(self.sys.join("class/power_supply"))
+        let dmi_field = |key, filename| {
+            self.cached_identity(key, now, || {
+                observed_text(dmi.join(filename), format!("/sys/class/dmi/id/{filename}"))
+            })
+        };
+        let model = dmi_field("model", "product_name");
+        let vendor = dmi_field("vendor", "sys_vendor");
+        let board = dmi_field("board", "board_name");
+        let bios = dmi_field("bios", "bios_version");
+        let kernel = self.cached_identity("kernel", now, || {
+            observed_text(
+                self.proc.join("sys/kernel/osrelease"),
+                "/proc/sys/kernel/osrelease".into(),
+            )
+        });
+        let supplies: Vec<_> = entries(self.sys.join("class/power_supply"))
             .iter()
             .filter(|p| read(p.join("type")).as_deref() != Some("Battery"))
-            .filter_map(|p| read(p.join("online")))
-            .filter(|value| value == "0" || value == "1")
+            .map(|p| {
+                observed_text(
+                    p.join("online"),
+                    format!("/sys/class/power_supply/{}/online", device_id(p)),
+                )
+                .derive(|value| match value.as_str() {
+                    "0" => Ok(false),
+                    "1" => Ok(true),
+                    _ => Err(ReadingStatus::Fault),
+                })
+            })
             .collect();
+        let ac_values: Vec<_> = supplies
+            .iter()
+            .filter_map(|reading| reading.value)
+            .collect();
+        let ac_online = Reading::from_result(
+            "/sys/class/power_supply/*/online".into(),
+            if ac_values.is_empty() {
+                Err(
+                    if supplies
+                        .iter()
+                        .any(|reading| reading.metadata.status == ReadingStatus::Fault)
+                    {
+                        ReadingStatus::Fault
+                    } else {
+                        ReadingStatus::Unavailable
+                    },
+                )
+            } else {
+                Ok(ac_values.iter().any(|value| *value))
+            },
+        );
+        let telemetry = [
+            ("model", &model.metadata),
+            ("vendor", &vendor.metadata),
+            ("board", &board.metadata),
+            ("bios", &bios.metadata),
+            ("kernel", &kernel.metadata),
+            ("cpu", &cpu.metadata),
+            ("cpu_usage", &cpu_usage.metadata),
+            ("cpu_frequency_mhz", &cpu_frequency_mhz.metadata),
+            ("memory_used_gib", &memory_used_gib.metadata),
+            ("memory_total_gib", &memory_total_gib.metadata),
+            ("ac_online", &ac_online.metadata),
+        ]
+        .into_iter()
+        .map(|(key, metadata)| (key.into(), metadata.clone()))
+        .collect();
         Snapshot {
             platform: "linux",
             is_mock: false,
             timestamp_ms: super::now_ms(),
-            model: read(dmi.join("product_name")),
-            vendor: read(dmi.join("sys_vendor")),
-            board: read(dmi.join("board_name")),
-            bios: read(dmi.join("bios_version")),
-            kernel: read(self.proc.join("sys/kernel/osrelease")),
-            cpu,
-            cpu_usage,
-            cpu_frequency_mhz,
-            memory_used_gib,
-            memory_total_gib,
-            ac_online: (!ac_values.is_empty()).then(|| ac_values.iter().any(|v| v == "1")),
+            model: model.value,
+            vendor: vendor.value,
+            board: board.value,
+            bios: bios.value,
+            kernel: kernel.value,
+            cpu: cpu.value,
+            cpu_usage: cpu_usage.value,
+            cpu_frequency_mhz: cpu_frequency_mhz.value,
+            memory_used_gib: memory_used_gib.value,
+            memory_total_gib: memory_total_gib.value,
+            ac_online: ac_online.value,
+            telemetry,
             sensors: self.sensors(),
             batteries: self.batteries(),
             backlights: self.backlights(),
@@ -141,12 +318,29 @@ impl Sysfs {
                     _ => (1.0, "RPM"),
                 };
                 let fault = read(device_path.join(format!("{stem}_fault"))).as_deref() == Some("1");
-                let value = if fault {
-                    None
+                let reading = if fault {
+                    Reading::from_result(
+                        format!("/sys/class/hwmon/{}/{name}", device_id(&device_path)),
+                        Err(ReadingStatus::Fault),
+                    )
                 } else {
-                    number(&path).map(|v| v / divisor).filter(|v| match kind {
-                        "temperature" => (-100.0..=250.0).contains(v),
-                        _ => *v >= 0.0,
+                    observed_text(
+                        &path,
+                        format!("/sys/class/hwmon/{}/{name}", device_id(&device_path)),
+                    )
+                    .derive(|text| {
+                        let value =
+                            text.parse::<f64>().map_err(|_| ReadingStatus::Fault)? / divisor;
+                        let valid = value.is_finite()
+                            && match kind {
+                                "temperature" => (-100.0..=250.0).contains(&value),
+                                _ => value >= 0.0,
+                            };
+                        if valid {
+                            Ok(value)
+                        } else {
+                            Err(ReadingStatus::Fault)
+                        }
                     })
                 };
                 let label =
@@ -156,8 +350,9 @@ impl Sysfs {
                     device: device.clone(),
                     label,
                     kind: kind.into(),
-                    value,
+                    value: reading.value,
                     unit: unit.into(),
+                    metadata: reading.metadata,
                 });
             }
         }
@@ -290,7 +485,7 @@ fn indexed(stem: &str, prefix: &str) -> bool {
         .is_some_and(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
 }
 
-fn cpu_usage(stat: &str, previous: &mut Option<(u64, u64)>) -> Option<f64> {
+fn cpu_counters(stat: &str) -> Option<(u64, u64)> {
     let line = stat.lines().find(|s| s.starts_with("cpu "))?;
     // guest and guest_nice are already accounted for in user/nice.
     let values: Vec<u64> = line
@@ -307,6 +502,11 @@ fn cpu_usage(stat: &str, previous: &mut Option<(u64, u64)>) -> Option<f64> {
         .iter()
         .try_fold(0_u64, |sum, n| sum.checked_add(*n))?;
     let idle = values[3].checked_add(*values.get(4).unwrap_or(&0))?;
+    Some((total, idle))
+}
+
+fn cpu_usage(stat: &str, previous: &mut Option<(u64, u64)>) -> Option<f64> {
+    let (total, idle) = cpu_counters(stat)?;
     let old = previous.replace((total, idle))?;
     let elapsed = total.checked_sub(old.0)?;
     let idle_elapsed = idle.checked_sub(old.1)?;
@@ -314,24 +514,55 @@ fn cpu_usage(stat: &str, previous: &mut Option<(u64, u64)>) -> Option<f64> {
         .then(|| (elapsed - idle_elapsed) as f64 / elapsed as f64 * 100.0)
 }
 
-fn memory(info: &str) -> (Option<f64>, Option<f64>) {
-    let get = |key: &str| {
-        info.lines().find_map(|line| {
-            let (k, v) = line.split_once(':')?;
-            (k == key)
-                .then(|| v.split_whitespace().next()?.parse::<u64>().ok())
-                .flatten()
+fn cpu_frequency(info: &str) -> Result<f64, ReadingStatus> {
+    let mut found = false;
+    let mhz: Vec<_> = info
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            if key.trim() != "cpu MHz" {
+                return None;
+            }
+            found = true;
+            value
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.is_finite() && *n >= 0.0)
         })
-    };
-    let total = get("MemTotal");
-    let available = get("MemAvailable");
-    (
-        total
-            .zip(available)
-            .and_then(|(t, a)| t.checked_sub(a))
-            .map(|k| k as f64 / 1_048_576.0),
-        total.map(|k| k as f64 / 1_048_576.0),
-    )
+        .collect();
+    if mhz.is_empty() {
+        return Err(if found {
+            ReadingStatus::Fault
+        } else {
+            ReadingStatus::Unavailable
+        });
+    }
+    let mean = mhz
+        .iter()
+        .map(|value| value / mhz.len() as f64)
+        .sum::<f64>();
+    if mean.is_finite() {
+        Ok(mean)
+    } else {
+        Err(ReadingStatus::Fault)
+    }
+}
+
+fn memory_value(info: &str, key: &str) -> Result<u64, ReadingStatus> {
+    let value = info
+        .lines()
+        .find_map(|line| {
+            let (k, value) = line.split_once(':')?;
+            (k == key).then_some(value)
+        })
+        .ok_or(ReadingStatus::Unavailable)?;
+    value
+        .split_whitespace()
+        .next()
+        .ok_or(ReadingStatus::Fault)?
+        .parse()
+        .map_err(|_| ReadingStatus::Fault)
 }
 
 #[cfg(test)]

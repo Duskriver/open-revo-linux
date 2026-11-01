@@ -8,6 +8,7 @@ use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
     os::unix::fs::FileExt,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -89,15 +90,15 @@ fn curve_frame(
     Ok(frame)
 }
 
-fn curve_supported() -> bool {
-    std::fs::read_to_string("/sys/module/openrevo_ec/parameters/fan_curve_abi")
+fn curve_supported(parameters: &Path) -> bool {
+    std::fs::read_to_string(parameters.join("fan_curve_abi"))
         .ok()
         .and_then(|s| s.trim().parse::<usize>().ok())
         == Some(protocol::VERSION)
 }
 
-fn curve_flag(name: &str) -> bool {
-    std::fs::read_to_string(format!("/sys/module/openrevo_ec/parameters/{name}"))
+fn curve_flag(parameters: &Path, name: &str) -> bool {
+    std::fs::read_to_string(parameters.join(name))
         .map(|s| s.trim() == "Y")
         .unwrap_or(false)
 }
@@ -120,10 +121,8 @@ fn parse_control_abi(result: std::io::Result<String>) -> Result<Option<usize>, S
     Ok(Some(version))
 }
 
-fn control_abi() -> Result<Option<usize>, String> {
-    parse_control_abi(std::fs::read_to_string(
-        "/sys/module/openrevo_ec/parameters/control_abi",
-    ))
+fn control_abi(parameters: &Path) -> Result<Option<usize>, String> {
+    parse_control_abi(std::fs::read_to_string(parameters.join("control_abi")))
 }
 
 fn require_control_version(version: Option<usize>) -> Result<(), String> {
@@ -134,8 +133,8 @@ fn require_control_version(version: Option<usize>) -> Result<(), String> {
     }
 }
 
-fn require_control_abi() -> Result<(), String> {
-    require_control_version(control_abi()?)
+fn require_control_abi(parameters: &Path) -> Result<(), String> {
+    require_control_version(control_abi(parameters)?)
 }
 
 fn control_frame(action: usize, arguments: [u8; 3]) -> Result<[u8; control::FRAME_SIZE], String> {
@@ -254,8 +253,9 @@ fn validate_limits(
     Ok(())
 }
 
-#[derive(Default)]
 pub struct LinuxEc {
+    device_path: PathBuf,
+    parameters_path: PathBuf,
     file: Option<File>,
     heartbeat: Option<Instant>,
     original_boost: Option<bool>,
@@ -263,39 +263,47 @@ pub struct LinuxEc {
     fan_config: Option<FanCurveConfig>,
 }
 
+impl Default for LinuxEc {
+    fn default() -> Self {
+        Self {
+            device_path: PathBuf::from("/dev/openrevo_ec"),
+            parameters_path: PathBuf::from("/sys/module/openrevo_ec/parameters"),
+            file: None,
+            heartbeat: None,
+            original_boost: None,
+            last_error: None,
+            fan_config: None,
+        }
+    }
+}
+
 impl LinuxEc {
     fn connect(&mut self) -> Result<&File, String> {
         if self.file.is_none() {
-            self.file = Some(OpenOptions::new().read(true).write(true).open("/dev/openrevo_ec")
+            self.file = Some(OpenOptions::new().read(true).write(true).open(&self.device_path)
                 .map_err(|e| format!("Uniwill EC 通道不可用：{e}；请安装 openrevo_ec 模块并授予当前会话访问权限"))?);
         }
         Ok(self.file.as_ref().unwrap())
     }
     pub fn snapshot(&mut self) -> OemSnapshot {
-        self.heartbeat = Some(Instant::now());
-        let abi = control_abi();
+        let abi = control_abi(&self.parameters_path);
         let control_backend = match &abi {
             Ok(Some(_)) => "semantic",
             Ok(None) => "legacy",
             Err(_) => "incompatible",
         };
-        let control_fault = curve_flag("control_fault");
-        let active = curve_flag("fan_curve_active");
-        let fault = curve_flag("fan_curve_fault");
+        let control_fault = curve_flag(&self.parameters_path, "control_fault");
+        let active = curve_flag(&self.parameters_path, "fan_curve_active");
+        let fault = curve_flag(&self.parameters_path, "fan_curve_fault");
         if !active {
             self.fan_config = None;
-        }
-        if active && !fault && self.fan_config.is_some() {
-            if let Err(error) = self.send_curve(protocol::HEARTBEAT, None) {
-                self.last_error = Some(error);
-            }
         }
         match self.connect().and_then(read_snapshot) {
             Ok(mut result) => {
                 // Permission on the device and the module's root-owned gate
                 // are separate. Reading this parameter never enables writes.
                 result.writable =
-                    std::fs::read_to_string("/sys/module/openrevo_ec/parameters/allow_writes")
+                    std::fs::read_to_string(self.parameters_path.join("allow_writes"))
                         .map(|s| s.trim() == "Y")
                         .unwrap_or(false)
                         && matches!(abi, Ok(Some(_)))
@@ -311,7 +319,7 @@ impl LinuxEc {
                     result.error = Some("当前 EC 驱动仅支持只读监测；请将 openrevo_ec 模块与应用配套升级后启用硬件控制".into());
                 }
                 result.fan_curve = CurveSnapshot {
-                    supported: matches!(abi, Ok(Some(_))) && curve_supported(),
+                    supported: matches!(abi, Ok(Some(_))) && curve_supported(&self.parameters_path),
                     active,
                     fault,
                     applied: self.fan_config.clone(),
@@ -331,7 +339,7 @@ impl LinuxEc {
                 control_backend,
                 control_fault,
                 fan_curve: CurveSnapshot {
-                    supported: matches!(abi, Ok(Some(_))) && curve_supported(),
+                    supported: matches!(abi, Ok(Some(_))) && curve_supported(&self.parameters_path),
                     active,
                     fault,
                     applied: self.fan_config.clone(),
@@ -347,20 +355,20 @@ impl LinuxEc {
         if mode != 1 && !ac {
             return Err("均衡/狂暴模式需要连接原装电源".into());
         }
-        require_control_abi()?;
+        require_control_abi(&self.parameters_path)?;
         self.restore_curve()?;
         self.send_control(control::MODE, [mode, 0, 0])
     }
     fn send_control(&mut self, action: usize, arguments: [u8; 3]) -> Result<(), String> {
         let frame = control_frame(action, arguments)?;
-        require_control_abi()?;
+        require_control_abi(&self.parameters_path)?;
         self.connect()?
             .write_all_at(&frame, control::REQUEST_OFFSET as u64)
             .map_err(|e| format!("EC 语义控制失败：{e}；请检查供电、驱动状态和当前控制策略"))
     }
     fn send_curve(&mut self, action: usize, config: Option<&FanCurveConfig>) -> Result<(), String> {
         let frame = curve_frame(action, config)?;
-        require_control_abi()?;
+        require_control_abi(&self.parameters_path)?;
         self.connect()?
             .write_all_at(&frame, protocol::REQUEST_OFFSET as u64)
             .map_err(|e| format!("风扇曲线操作失败：{e}；请检查驱动版本、供电和当前强冷状态"))
@@ -370,7 +378,7 @@ impl LinuxEc {
         if !ac {
             return Err("应用风扇曲线需要连接原装电源；当前可编辑和保存草稿".into());
         }
-        if !curve_supported() {
+        if !curve_supported(&self.parameters_path) {
             return Err("请先更新 openrevo_ec 驱动以启用整表曲线控制".into());
         }
         self.send_curve(protocol::APPLY, Some(&config))?;
@@ -380,7 +388,7 @@ impl LinuxEc {
         Ok(())
     }
     pub fn restore_curve(&mut self) -> Result<(), String> {
-        if curve_flag("fan_curve_active") {
+        if curve_flag(&self.parameters_path, "fan_curve_active") {
             self.send_curve(protocol::RESTORE, None)?;
         }
         self.fan_config = None;
@@ -388,10 +396,10 @@ impl LinuxEc {
         Ok(())
     }
     pub fn power(&mut self, requested: CpuLimits, ac: bool) -> Result<(), String> {
-        if curve_flag("fan_curve_active") {
+        if curve_flag(&self.parameters_path, "fan_curve_active") {
             return Err("请先恢复原风扇策略，再调整 CPU 功耗".into());
         }
-        require_control_abi()?;
+        require_control_abi(&self.parameters_path)?;
         let before = read_snapshot(self.connect()?)?;
         validate_limits(&before, requested, ac)?;
         self.send_control(
@@ -400,7 +408,7 @@ impl LinuxEc {
         )
     }
     pub fn boost(&mut self, enabled: bool) -> Result<(), String> {
-        require_control_abi()?;
+        require_control_abi(&self.parameters_path)?;
         let file = self.connect()?;
         let current = file.read(ADDR_FAN_BOOST_CLAMP)?;
         self.send_control(control::BOOST, [u8::from(enabled), 0, 0])?;
@@ -415,7 +423,7 @@ impl LinuxEc {
             return Ok(());
         }
         let result = (|| {
-            if curve_flag("control_fault") {
+            if curve_flag(&self.parameters_path, "control_fault") {
                 self.send_control(control::RECOVER, [0; 3])?;
             }
             self.restore_curve()?;
@@ -432,16 +440,57 @@ impl LinuxEc {
         self.heartbeat = None;
         result
     }
-    pub fn watchdog(&mut self) {
+    fn expire_control_lease(&mut self) -> Result<(), String> {
         if (self.original_boost.is_some() || self.fan_config.is_some())
             && self
                 .heartbeat
                 .is_some_and(|t| t.elapsed() > Duration::from_secs(10))
         {
             if let Err(error) = self.release() {
-                self.last_error = Some(error);
+                self.last_error = Some(error.clone());
+                return Err(error);
             }
         }
+        Ok(())
+    }
+
+    pub fn renew_control_lease(&mut self) -> Result<(), String> {
+        self.expire_control_lease()?;
+        if self.original_boost.is_none() && self.fan_config.is_none() {
+            return Ok(());
+        }
+        // A recovery fault is not a successful heartbeat. Keep the previous
+        // lease deadline so user-space release and kernel recovery can proceed.
+        let fault = if curve_flag(&self.parameters_path, "control_fault") {
+            Some("机身控制事务正在故障恢复，无法续期硬件控制")
+        } else if curve_flag(&self.parameters_path, "fan_curve_fault") {
+            Some("风扇曲线正在故障恢复，无法续期硬件控制")
+        } else {
+            None
+        };
+        if let Some(message) = fault {
+            let error = message.to_string();
+            self.last_error = Some(error.clone());
+            return Err(error);
+        }
+        let active = curve_flag(&self.parameters_path, "fan_curve_active");
+        if !active {
+            self.fan_config = None;
+        }
+        if active && self.fan_config.is_some() {
+            if let Err(error) = self.send_curve(protocol::HEARTBEAT, None) {
+                self.last_error = Some(error.clone());
+                return Err(error);
+            }
+        }
+        if self.original_boost.is_some() || self.fan_config.is_some() {
+            self.heartbeat = Some(Instant::now());
+        }
+        Ok(())
+    }
+
+    pub fn watchdog(&mut self) {
+        let _ = self.expire_control_lease();
     }
 }
 
@@ -528,6 +577,205 @@ mod tests {
         registers.insert(ADDR_MAIN_FAN_RPM_B1, 10);
         registers.insert(ADDR_MAIN_FAN_RPM_B2, 20);
         ReadOnlyEc(registers)
+    }
+
+    fn transport_fixture() -> (tempfile::TempDir, LinuxEc) {
+        let root = tempfile::tempdir().unwrap();
+        let device_path = root.path().join("ec-device");
+        let parameters_path = root.path().join("parameters");
+        std::fs::create_dir(&parameters_path).unwrap();
+        for (name, value) in [
+            ("control_abi", control::VERSION.to_string()),
+            ("fan_curve_abi", protocol::VERSION.to_string()),
+            ("allow_writes", "Y".to_string()),
+            ("fan_curve_active", "Y".to_string()),
+            ("fan_curve_fault", "N".to_string()),
+            ("control_fault", "N".to_string()),
+        ] {
+            std::fs::write(parameters_path.join(name), value).unwrap();
+        }
+        let device = File::create(&device_path).unwrap();
+        for (address, value) in fixture().0 {
+            device.write_all_at(&[value], u64::from(address)).unwrap();
+        }
+        for address in [ADDR_SECOND_FAN_RPM_B1, ADDR_SECOND_FAN_RPM_B2] {
+            device.write_all_at(&[0], u64::from(address)).unwrap();
+        }
+        let ec = LinuxEc {
+            device_path,
+            parameters_path,
+            file: None,
+            heartbeat: None,
+            original_boost: None,
+            last_error: None,
+            fan_config: None,
+        };
+        (root, ec)
+    }
+
+    fn curve_config() -> FanCurveConfig {
+        let points: Vec<_> = [35, 45, 55, 65, 75, 85, 90, 95]
+            .into_iter()
+            .map(|temp| super::super::fan_curve::FanCurvePoint { temp, duty: 100 })
+            .collect();
+        FanCurveConfig {
+            cpu: points.clone(),
+            gpu: points,
+            isolated: true,
+            ramp_enabled: true,
+            ramp_ms: 300,
+        }
+    }
+
+    fn curve_request(ec: &LinuxEc) -> [u8; protocol::FRAME_SIZE] {
+        let mut frame = [0; protocol::FRAME_SIZE];
+        File::open(&ec.device_path)
+            .unwrap()
+            .read_exact_at(&mut frame, protocol::REQUEST_OFFSET as u64)
+            .unwrap();
+        frame
+    }
+
+    #[test]
+    fn oem_snapshots_neither_renew_lease_nor_send_curve_heartbeat() {
+        let (_root, mut ec) = transport_fixture();
+        ec.apply_curve(curve_config(), true).unwrap();
+        let expired = Instant::now() - Duration::from_secs(11);
+        ec.heartbeat = Some(expired);
+        let before = std::fs::read(&ec.device_path).unwrap();
+        for _ in 0..3 {
+            assert!(ec.snapshot().available);
+            assert_eq!(ec.heartbeat, Some(expired));
+            assert_eq!(std::fs::read(&ec.device_path).unwrap(), before);
+        }
+        ec.watchdog();
+        assert_eq!(
+            curve_request(&ec),
+            curve_frame(protocol::RESTORE, None).unwrap()
+        );
+        assert!(ec.file.is_none());
+        assert!(ec.fan_config.is_none());
+        assert_eq!(ec.heartbeat, None);
+    }
+
+    #[test]
+    fn explicit_oem_renewal_sends_heartbeat_for_a_live_owned_curve() {
+        let (_root, mut ec) = transport_fixture();
+        ec.apply_curve(curve_config(), true).unwrap();
+        let earlier = Instant::now() - Duration::from_secs(5);
+        ec.heartbeat = Some(earlier);
+        ec.renew_control_lease().unwrap();
+        assert!(ec.heartbeat.unwrap() > earlier);
+        assert_eq!(
+            curve_request(&ec),
+            curve_frame(protocol::HEARTBEAT, None).unwrap()
+        );
+        assert!(ec.fan_config.is_some());
+    }
+
+    #[test]
+    fn late_oem_heartbeat_restores_instead_of_reviving_the_curve() {
+        let (_root, mut ec) = transport_fixture();
+        ec.apply_curve(curve_config(), true).unwrap();
+        ec.heartbeat = Some(Instant::now() - Duration::from_secs(11));
+        ec.renew_control_lease().unwrap();
+        assert_eq!(
+            curve_request(&ec),
+            curve_frame(protocol::RESTORE, None).unwrap()
+        );
+        assert!(ec.file.is_none());
+        assert!(ec.fan_config.is_none());
+        assert_eq!(ec.heartbeat, None);
+        // Even a stale active flag cannot reapply a curve without ownership.
+        ec.renew_control_lease().unwrap();
+        assert_eq!(
+            curve_request(&ec),
+            curve_frame(protocol::RESTORE, None).unwrap()
+        );
+        assert_eq!(ec.heartbeat, None);
+    }
+
+    #[test]
+    fn failed_oem_heartbeat_does_not_extend_the_user_space_lease() {
+        let (_root, mut ec) = transport_fixture();
+        ec.apply_curve(curve_config(), true).unwrap();
+        let earlier = Instant::now() - Duration::from_secs(5);
+        ec.heartbeat = Some(earlier);
+        std::fs::write(ec.parameters_path.join("control_abi"), "invalid").unwrap();
+        assert!(ec.renew_control_lease().is_err());
+        assert_eq!(ec.heartbeat, Some(earlier));
+        assert!(ec.last_error.is_some());
+        assert_eq!(
+            curve_request(&ec),
+            curve_frame(protocol::APPLY, Some(&curve_config())).unwrap()
+        );
+    }
+
+    #[test]
+    fn faulted_curve_cannot_renew_or_delay_expiry_restoration() {
+        let (_root, mut ec) = transport_fixture();
+        ec.apply_curve(curve_config(), true).unwrap();
+        let earlier = Instant::now() - Duration::from_secs(5);
+        ec.heartbeat = Some(earlier);
+        std::fs::write(ec.parameters_path.join("fan_curve_fault"), "Y").unwrap();
+        let before = std::fs::read(&ec.device_path).unwrap();
+        for _ in 0..3 {
+            let error = ec.renew_control_lease().unwrap_err();
+            assert!(error.contains("风扇曲线"));
+            assert_eq!(ec.last_error.as_ref(), Some(&error));
+            assert_eq!(ec.heartbeat, Some(earlier));
+            assert_eq!(std::fs::read(&ec.device_path).unwrap(), before);
+        }
+        ec.heartbeat = Some(Instant::now() - Duration::from_secs(11));
+        ec.watchdog();
+        assert_eq!(
+            curve_request(&ec),
+            curve_frame(protocol::RESTORE, None).unwrap()
+        );
+        assert!(ec.file.is_none());
+        assert!(ec.fan_config.is_none());
+        assert_eq!(ec.heartbeat, None);
+    }
+
+    #[test]
+    fn control_recovery_fault_blocks_both_boost_and_curve_renewal() {
+        for owns_curve in [false, true] {
+            let (_root, mut ec) = transport_fixture();
+            if owns_curve {
+                ec.apply_curve(curve_config(), true).unwrap();
+            } else {
+                std::fs::write(ec.parameters_path.join("fan_curve_active"), "N").unwrap();
+                ec.boost(true).unwrap();
+            }
+            let earlier = Instant::now() - Duration::from_secs(5);
+            ec.heartbeat = Some(earlier);
+            std::fs::write(ec.parameters_path.join("control_fault"), "Y").unwrap();
+            let before = std::fs::read(&ec.device_path).unwrap();
+            let error = ec.renew_control_lease().unwrap_err();
+            assert!(error.contains("机身控制事务"));
+            assert_eq!(ec.last_error.as_ref(), Some(&error));
+            assert_eq!(ec.heartbeat, Some(earlier));
+            assert_eq!(std::fs::read(&ec.device_path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn late_boost_heartbeat_restores_the_previous_boost_state() {
+        let (_root, mut ec) = transport_fixture();
+        std::fs::write(ec.parameters_path.join("fan_curve_active"), "N").unwrap();
+        ec.boost(true).unwrap();
+        assert_eq!(ec.original_boost, Some(false));
+        ec.heartbeat = Some(Instant::now() - Duration::from_secs(11));
+        ec.renew_control_lease().unwrap();
+        let mut request = [0; control::FRAME_SIZE];
+        File::open(&ec.device_path)
+            .unwrap()
+            .read_exact_at(&mut request, control::REQUEST_OFFSET as u64)
+            .unwrap();
+        assert_eq!(request, control_frame(control::BOOST, [0; 3]).unwrap());
+        assert!(ec.original_boost.is_none());
+        assert!(ec.file.is_none());
+        assert_eq!(ec.heartbeat, None);
     }
 
     #[test]
