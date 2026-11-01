@@ -120,6 +120,18 @@ class LinuxWindow(unittest.TestCase):
     def navigate(self, name):
         self.execute("[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === arguments[0]).click(); return true;", [name])
 
+    def screenshot(self):
+        # WebKitWebDriver can time out a capture during a compositor update.
+        # Retry only this read-only request; never repeat an IPC mutation.
+        for attempt in range(2):
+            try:
+                return base64.b64decode(request('GET', f'/session/{self.session}/screenshot'))
+            except (TimeoutError, URLError, HTTPException, OSError):
+                if attempt:
+                    raise
+                print('Screenshot transport failed; retrying once', flush=True)
+                time.sleep(0.3)
+
     def click_text(self, text):
         self.wait_js(f"[...document.querySelectorAll('button')].some(b => b.textContent === {json.dumps(text)} && !b.disabled)")
         self.execute("[...document.querySelectorAll('button')].find(b => b.textContent === arguments[0]).click(); return true;", [text])
@@ -293,7 +305,7 @@ class LinuxWindow(unittest.TestCase):
         self.assertGreater(self.execute("return document.querySelectorAll('.linux-telemetry-sources .quick-row').length;"), 0)
         time.sleep(0.2)
         (self.test_home / "telemetry-sources.png").write_bytes(
-            base64.b64decode(request('GET', f'/session/{self.session}/screenshot')))
+            self.screenshot())
         self.execute("[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === '状态总览').click(); return true;")
 
     def test_new_control_commands_reject_unknown_targets(self):
@@ -629,12 +641,12 @@ class LinuxWindow(unittest.TestCase):
             self.execute("document.querySelector('.linux-fan-curve-panel').scrollIntoView({block:'start'}); return true;")
             self.wait_js("document.querySelector('.linux-fan-curve-panel').getBoundingClientRect().top < 160")
             output = ROOT / 'test-results/linux-fan-curve.png'
-            output.write_bytes(base64.b64decode(request('GET', f'/session/{self.session}/screenshot')))
+            output.write_bytes(self.screenshot())
             # Capture the new settings controls as well as the editor above.
             self.execute("document.querySelector('.linux-fan-curve-panel > .sys-sub-panel').scrollIntoView({block:'center'}); return true;")
             time.sleep(0.2)
             (self.test_home / 'curve-settings.png').write_bytes(
-                base64.b64decode(request('GET', f'/session/{self.session}/screenshot')))
+                self.screenshot())
 
     def test_ui_legacy_curve_migration_preserves_source_without_applying(self):
         with self.isolated_config_document(), self.curve_fixture():
@@ -754,8 +766,7 @@ class LinuxWindow(unittest.TestCase):
         self.assertNotIn("连接中断", self.execute("return document.body.innerText;"))
         output = Path(os.environ.get("OPENREVO_TEST_SCREENSHOT", ROOT / "test-results/linux-window.png"))
         output.parent.mkdir(parents=True, exist_ok=True)
-        image = request("GET", f"/session/{self.session}/screenshot")
-        output.write_bytes(base64.b64decode(image))
+        output.write_bytes(self.screenshot())
 
 
 if __name__ == "__main__":
