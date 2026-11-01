@@ -20,19 +20,21 @@ CMD 的转义解析缺陷将 `\"` 错误解析，导致 `rmdir /s /q` 接收到�
 1. **工程主体位置**：当前目录（`open-revo/`）为所有业务逻辑、驱动通信、前端 UI 与构建打包的核心工程根目录。
 2. **归档隔离**：上级归档目录 `../bak/` 严禁修改与写入，仅作为历史逆向资料只读查阅。
 3. **开发流规范**：本项目采用**单主干（`main`）+ Tag 驱动发布**的轻量开发流。所有提交直接推送到 `main`，正式版本严格以 Git Tag（如 `v1.2.0`）控制发布。
-4. **常用开发与发布脚本**（位于 `scripts/` 目录下）：
-   - `scripts/safe_check.ps1`：静态安全性检查（包含前端构建检查、Cargo 语法与类型校验、底层寄存器字典隔离扫描）。
-   - `scripts/safe_build.ps1`：编译打包独立 release 产物。
-   - `scripts/safe_pack.ps1`：完整便携包与分发包打包（产物严格归档至 `dist_release/`）。
-   - `scripts/safe_make_latest.ps1`：生成更新清单 `latest.json`。
-   - 配套外壳：`run_safe_check.bat`、`run_build.bat`、`run_pack.bat`、`run_make_latest.bat`。
+4. **Linux-only 开发入口**：
+   - `pnpm linux:dev`：启动 Linux 桌面程序。
+   - `pnpm check`：硬件字典边界、Python 测试、Rust 核心测试和 TypeScript 检查。
+   - `pnpm linux:build`：构建 Debian 应用包。
+   - `make -C drivers/openrevo-ec test`：无硬件的内核事务故障注入测试。
+   - `make -C drivers/openrevo-ec`：仅编译内核模块，不加载。
+   - 发布以 `src-tauri/tauri.conf.json` 为版本来源，产物归档至 `dist_release/`。
+5. **支持边界**：当前只维护 Linux。应用普通用户运行，Tauri 只承载桌面集成与 IPC，硬件逻辑在 `openrevo-core` 和 `drivers/openrevo-ec`。模块安装/替换和真实硬件调节应与离线构建测试分开确认。
 
 ## 4. 核心硬件资产字典与 HAL 强隔离守则 (HARDWARE ASSET DICTIONARY & HAL ISOLATION)
 注意：本项目已完全开源（钥匙库配置 `config/ec_registry.json` 随仓公开），但为保证系统底层硬件调控的安全性、杜绝魔法数字散落导致的误写死机/烧机风险，以及跨机型自适应适配的一致性，必须严格执行以下 HAL 规范：
-1. **严禁在业务代码中出现裸 EC 寄存器数字**：严禁在 `src-tauri/src/hal/` 以外的任何业务文件内硬编码任何明文 EC 物理地址（如 `1844`、`1873`、`1958`、`1996` 等整数或十六进制字面量）。
-2. **钥匙库唯一登记**：所有 EC 物理寄存器地址、掩码控制位、IOCTL 码与芯片定长协议帧，必须统一在 `src-tauri/config/ec_registry.json` 或 `src-tauri/src/hal/vault.rs` 中登记，由编译期构建脚本动态生成常量绑定。
-3. **全栈引用规范**：业务逻辑层（功耗调度、设备开关、RGB灯控、水冷、硬件探测等）访问硬件时，必须统一引用 `crate::hal::vault::ec::*` 或 `crate::driver::wmi_ec::*` 导出的常量别名（如 `ADDR_BATTERY_PROTECTION_MODE`、`ADDR_POWER_STATUS`），严禁越过钥匙库直接传裸数字。
-4. **严禁裸地址命名与静态门禁拦截**：严禁使用诸如 `cur_1862`、`pre_1860`、`r1894` 等包含物理地址的变量名、注释或结构体字段，必须统一采用人类可读的业务语义命名（如 `cur_db_target_watts`、`pre_tgp_offset`）。所有开发代码提交前必须强制通过 `scripts/check_vault_leaks.ps1` 扫描，该脚本已作为 `safe_check.ps1` 的强制前置门禁。
+1. **严禁在业务代码中出现裸 EC 寄存器数字**：严禁在 HAL（`src-tauri/crates/openrevo-core/src/hal/` 和 `drivers/openrevo-ec/`）以外的任何业务文件内硬编码任何明文 EC 物理地址（如 `1844`、`1873`、`1958`、`1996` 等整数或十六进制字面量）。
+2. **钥匙库唯一登记**：所有 EC 物理寄存器地址、掩码控制位、IOCTL 码与芯片定长协议帧，必须统一在 `src-tauri/config/ec_registry.json` 或 `src-tauri/crates/openrevo-core/src/hal/vault.rs` 中登记，由编译期构建脚本动态生成常量绑定。
+3. **全栈引用规范**：业务逻辑层（功耗调度、设备开关、RGB灯控、水冷、硬件探测等）访问硬件时，必须统一引用 `crate::hal::vault::ec::*` 导出的常量别名（如 `ADDR_BATTERY_PROTECTION_MODE`、`ADDR_POWER_STATUS`），严禁越过钥匙库直接传裸数字。
+4. **严禁裸地址命名与静态门禁拦截**：严禁使用诸如 `cur_1862`、`pre_1860`、`r1894` 等包含物理地址的变量名、注释或结构体字段，必须统一采用人类可读的业务语义命名（如 `cur_db_target_watts`、`pre_tgp_offset`）。所有开发代码提交前必须强制通过 `python3 scripts/check_vault_leaks.py` 扫描，该检查器是 `pnpm check` 与 Linux CI 的前置门禁。历史 PowerShell 外壳仅调用同一检查器。
 
 ## 5. 脚本编码与多语言环境安全守则 (INVIOLABLE SCRIPT ENCODING RULES)
 1. **纯 ASCII 核心军规（Pure ASCII Policy）**：所有存放在 `scripts/` 及随项目打包分发的自动化维护、测试与编译脚本（`.ps1` 与 `.bat`），**必须 100% 采用 Pure ASCII（纯 ASCII 英文，字符范围严格限定在 `0x20..0x7E`、`\t`、`\r`、`\n`）编写**。严禁在脚本内部出现任何中文字符串、中文注释或全角符号。
@@ -40,7 +42,7 @@ CMD 的转义解析缺陷将 `\"` 错误解析，导致 `rmdir /s /q` 接收到�
    ```powershell
    python scripts/ensure_ascii_crlf.py <目标脚本路径>
    ```
-3. **交互非阻塞原则（Non-blocking Headless Execution）**：脚本严禁在无条件执行分支中盲目调用 `pause` 或 `Read-Host`，避免在非交互式后台调用、CLI 自动化或子进程管道中发生无限挂起卡死；需要管理员权限时必须通过 `WindowsBuiltInRole` 动态嗅探并优雅自适应提权。
+3. **交互非阻塞原则（Non-blocking Headless Execution）**：脚本严禁在无条件执行分支中盲目调用 `pause` 或 `Read-Host`，避免在非交互式后台调用、CLI 自动化或子进程管道中发生无限挂起卡死；历史 Windows 脚本需要管理员权限时通过 `WindowsBuiltInRole` 检查；Linux 安装入口使用明确的权限检查与发行版授权机制，GUI 不提权。
 4. **用户引导外壳隔离（Safe Shell Wrapper）**：若确需向终端用户展示外壳引导，外壳批处理（`.bat`）首行必须显式声明 `@echo off`，所有提示文本必须严格收拢为纯 ASCII 英文，底层核心调度调用纯 ASCII + CRLF 的 `.ps1` 脚本。
 
 ## 6. 前端设计系统规范与样式收拢守则 (INVIOLABLE UI DESIGN SYSTEM TOKENS)

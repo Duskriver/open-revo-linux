@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    configure|abort-upgrade|abort-remove|abort-deconfigure)
+        # A manually installed module can shadow DKMS's module after a reboot.
+        # Report exact files; never remove them or unload an active controller.
+        for candidate in /lib/modules/*/extra/openrevo/openrevo_ec.ko \
+            /lib/modules/*/extra/openrevo/openrevo_ec.ko.xz \
+            /lib/modules/*/extra/openrevo/openrevo_ec.ko.zst \
+            /lib/modules/*/extra/openrevo/openrevo_ec.ko.gz; do
+            if [ -f "$candidate" ]; then
+                printf 'Manual OpenRevo module found: %s\n' "$candidate" >&2
+                printf '%s\n' 'Resolve this duplicate module before reconfiguring openrevo-ec-dkms.' >&2
+                printf '%s\n' 'The package has not removed files or unloaded the active module.' >&2
+                exit 1
+            fi
+        done
+        if [ ! -x /usr/lib/dkms/common.postinst ]; then
+            printf '%s\n' 'Missing DKMS package helper: /usr/lib/dkms/common.postinst' >&2
+            exit 1
+        fi
+        /usr/lib/dkms/common.postinst openrevo-ec '@VERSION@' /usr/share/openrevo-ec-dkms '' "${2:-}"
+        if [ -S /run/udev/control ]; then
+            udevadm control --reload-rules
+        fi
+        printf '%s\n' 'DKMS processing finished. Check its output for missing kernel headers or signing requirements.'
+        printf '%s\n' 'Reboot to activate the new OpenRevo driver. No active module was forcibly reloaded.'
+        ;;
+esac
+exit 0

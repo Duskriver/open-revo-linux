@@ -13,7 +13,9 @@
     "tauri:build": "tauri build --no-bundle",
     "linux:dev": "tauri dev",
     "linux:build": "tauri build --bundles deb",
-    "linux:check": "cargo test --manifest-path src-tauri/Cargo.toml -p openrevo-core && tsc --noEmit"
+    "linux:check": "pnpm check",
+    "check": "python3 scripts/check_vault_leaks.py && python3 -m unittest discover -s tests -p 'test_*.py' && cargo test --manifest-path src-tauri/Cargo.toml -p openrevo-core && tsc --noEmit",
+    "linux:driver:build": "python3 packaging/build_driver_package.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

@@ -4,12 +4,13 @@ import { RevCard } from '../ui/RevCard';
 import { ModeSelector } from '../ModeSelector';
 import { CpuPlSliderRow } from '../tuning/CpuPlSliderRow';
 import { CpuLimits, LinuxOemSnapshot } from '../../types/linux';
+import type { LinuxAction } from '../../lib/linuxApi';
 
 export interface OemControlProps {
   oem: LinuxOemSnapshot;
   disabled: boolean;
   acOnline: boolean;
-  act: (command: string, args: Record<string, unknown>) => Promise<boolean>;
+  act: LinuxAction;
 }
 
 export function OemModes({ oem, disabled, acOnline, act }: OemControlProps) {

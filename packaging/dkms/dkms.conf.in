@@ -1,0 +1,8 @@
+PACKAGE_NAME="openrevo-ec"
+PACKAGE_VERSION="@VERSION@"
+BUILT_MODULE_NAME[0]="openrevo_ec"
+DEST_MODULE_LOCATION[0]="/updates/dkms"
+MAKE[0]="make KDIR=/lib/modules/${kernelver}/build"
+CLEAN="true"
+AUTOINSTALL="yes"
+BUILD_EXCLUSIVE_ARCH="x86_64"

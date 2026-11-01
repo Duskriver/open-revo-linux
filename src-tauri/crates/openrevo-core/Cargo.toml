@@ -1,13 +1,18 @@
 [package]
 name = "openrevo-core"
 version = "0.9.3"
-description = "High-Performance Core Engine for Mechrevo Laptop Hardware Orchestration"
+description = "Linux hardware control and telemetry for Mechrevo laptops"
 license = "GPL-3.0-or-later"
 edition = "2021"
+autobins = false
 
 [lib]
 name = "openrevo_core"
-crate-type = ["lib", "cdylib"]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "openrevo-probe"
+path = "src/bin/openrevo-probe.rs"
 
 [dev-dependencies]
 tempfile = "3"
@@ -18,40 +23,4 @@ serde_json = "1.0"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-[target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
-
-[target.'cfg(windows)'.dependencies]
-libloading = "0.8"
-parking_lot = "0.12"
-tokio = { version = "1", features = ["time", "sync", "macros"] }
-semver = "1.0"
-ureq = { version = "2.10", default-features = false, features = ["json", "native-tls"] }
-sha2 = "0.10"
-rhai = { version = "1.19", features = ["sync", "no_module", "no_custom_syntax", "no_closure", "no_optimize"] }
-windows = { version = "0.58", features = [
-    "Win32_Graphics_Gdi",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_System_Power",
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_Com",
-    "Win32_System_Ole",
-    "Win32_System_Variant",
-    "Win32_System_Wmi",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_Registry",
-    "Win32_System_Threading",
-    "Win32_System_JobObjects",
-    "Win32_Media_Audio",
-    "Win32_Media_Audio_Endpoints",
-    "Devices_Bluetooth",
-    "Devices_Bluetooth_Advertisement",
-    "Devices_Bluetooth_GenericAttributeProfile",
-    "Devices_Radios",
-    "Devices_Enumeration",
-    "Storage_Streams",
-    "Foundation",
-    "Foundation_Collections",
-] }

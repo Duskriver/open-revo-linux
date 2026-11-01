@@ -2,7 +2,7 @@
 use super::{
     fan_curve::FanCurveConfig,
     tongfang,
-    vault::{ec::*, linux_fan as protocol, mask::*, tongfang as values},
+    vault::{ec::*, linux_control as control, linux_fan as protocol, mask::*, tongfang as values},
 };
 use serde::Serialize;
 use std::{
@@ -13,7 +13,6 @@ use std::{
 
 pub trait EcIo {
     fn read(&self, address: u16) -> Result<u8, String>;
-    fn write(&self, address: u16, value: u8) -> Result<(), String>;
 }
 
 impl EcIo for File {
@@ -22,10 +21,6 @@ impl EcIo for File {
         self.read_exact_at(&mut byte, u64::from(address))
             .map_err(|e| format!("EC 读取失败：{e}"))?;
         Ok(byte[0])
-    }
-    fn write(&self, address: u16, value: u8) -> Result<(), String> {
-        self.write_all_at(&[value], u64::from(address))
-            .map_err(|e| format!("EC 写入失败：{e}"))
     }
 }
 
@@ -49,6 +44,9 @@ pub struct OemSnapshot {
     pub presets: Vec<CpuLimits>,
     pub limits: Option<CpuLimits>,
     pub fan_curve: CurveSnapshot,
+    pub control_abi: Option<usize>,
+    pub control_backend: &'static str,
+    pub control_fault: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -102,6 +100,64 @@ fn curve_flag(name: &str) -> bool {
     std::fs::read_to_string(format!("/sys/module/openrevo_ec/parameters/{name}"))
         .map(|s| s.trim() == "Y")
         .unwrap_or(false)
+}
+
+fn parse_control_abi(result: std::io::Result<String>) -> Result<Option<usize>, String> {
+    let text = match result {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("无法读取 EC 控制协议版本，停止写入：{error}")),
+    };
+    let version = text
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| "EC 控制协议版本无效，停止写入".to_string())?;
+    if version != control::VERSION {
+        return Err(format!(
+            "EC 控制协议版本 {version} 与当前应用不兼容，请配套更新应用和驱动"
+        ));
+    }
+    Ok(Some(version))
+}
+
+fn control_abi() -> Result<Option<usize>, String> {
+    parse_control_abi(std::fs::read_to_string(
+        "/sys/module/openrevo_ec/parameters/control_abi",
+    ))
+}
+
+fn require_control_version(version: Option<usize>) -> Result<(), String> {
+    if version == Some(control::VERSION) {
+        Ok(())
+    } else {
+        Err("当前 EC 驱动仅支持只读监测；请将 openrevo_ec 模块与应用配套升级后启用硬件控制".into())
+    }
+}
+
+fn require_control_abi() -> Result<(), String> {
+    require_control_version(control_abi()?)
+}
+
+fn control_frame(action: usize, arguments: [u8; 3]) -> Result<[u8; control::FRAME_SIZE], String> {
+    let valid = match action {
+        control::MODE => (1..=3).contains(&arguments[0]) && arguments[1..] == [0, 0],
+        control::POWER => {
+            usize::from(arguments[0]) >= control::MIN_POWER
+                && arguments[0] <= arguments[1]
+                && usize::from(arguments[2]) >= usize::from(arguments[1]) + control::PL4_MARGIN
+        }
+        control::BOOST => arguments[0] <= 1 && arguments[1..] == [0, 0],
+        control::RECOVER => arguments == [0; 3],
+        _ => false,
+    };
+    if !valid {
+        return Err("无效的 EC 语义控制请求".into());
+    }
+    let mut frame = [0; control::FRAME_SIZE];
+    frame[control::VERSION_OFFSET] = control::VERSION as u8;
+    frame[control::ACTION_OFFSET] = action as u8;
+    frame[control::ARGUMENT_OFFSET..control::RESERVED_OFFSET].copy_from_slice(&arguments);
+    Ok(frame)
 }
 
 fn limits(io: &impl EcIo, addresses: [u16; 3]) -> Result<CpuLimits, String> {
@@ -167,142 +223,17 @@ pub fn read_snapshot(io: &impl EcIo) -> Result<OemSnapshot, String> {
         presets: factory,
         limits: current,
         fan_curve: CurveSnapshot::default(),
+        control_abi: None,
+        control_backend: "unknown",
+        control_fault: false,
     })
 }
 
-/// Capture every original value before the first write, verify each stable
-/// register, and restore even the failing write (it may have reached firmware).
-fn transaction(io: &impl EcIo, changes: &[(u16, u8)]) -> Result<(), String> {
-    transaction_commit(io, changes, None)
-}
-
-fn transaction_commit(
-    io: &impl EcIo,
-    changes: &[(u16, u8)],
-    trigger: Option<u8>,
+fn validate_limits(
+    before: &OemSnapshot,
+    requested: CpuLimits,
+    ac_online: bool,
 ) -> Result<(), String> {
-    let originals: Vec<_> = changes
-        .iter()
-        .map(|(a, _)| io.read(*a))
-        .collect::<Result<_, _>>()?;
-    let original_trigger = if trigger.is_some() {
-        Some(io.read(ADDR_TRIGGER_BYTE)?)
-    } else {
-        None
-    };
-    let rollback = |last: usize, error: String| -> Result<(), String> {
-        let mut failed = false;
-        for index in (0..=last).rev() {
-            let address = changes[index].0;
-            let expected = originals[index];
-            failed |= io
-                .write(address, expected)
-                .and_then(|()| io.read(address))
-                .map(|v| v != expected)
-                .unwrap_or(true);
-        }
-        if let Some(old_trigger) = original_trigger {
-            // Re-latch the restored mode, not the failed target. Trigger bits
-            // self-clear, so restore their meaning instead of stale raw bits.
-            if let Ok(clamp) = io.read(ADDR_FAN_BOOST_CLAMP) {
-                if let Some(mode) = tongfang::decode_mode(clamp) {
-                    failed |= io
-                        .write(ADDR_TRIGGER_BYTE, tongfang::mode_trigger(old_trigger, mode))
-                        .is_err();
-                }
-            } else {
-                failed = true;
-            }
-        }
-        Err(format!(
-            "{error}；{}",
-            if failed {
-                "部分寄存器恢复失败，请退出控制并重启机器"
-            } else {
-                "已恢复操作前的寄存器"
-            }
-        ))
-    };
-    for (index, (address, value)) in changes.iter().enumerate() {
-        if originals[index] == *value {
-            continue;
-        }
-        let result = io.write(*address, *value).and_then(|()| {
-            if io.read(*address)? == *value {
-                Ok(())
-            } else {
-                Err("EC 写入后的读回不一致".into())
-            }
-        });
-        if let Err(error) = result {
-            return rollback(index, error);
-        }
-    }
-    if let Some(value) = trigger {
-        if let Err(error) = io.write(ADDR_TRIGGER_BYTE, value) {
-            return rollback(changes.len() - 1, error);
-        }
-    }
-    Ok(())
-}
-
-pub fn apply_mode(io: &impl EcIo, mode: u8, ac_online: bool) -> Result<(), String> {
-    let base = tongfang::mode_clamp(mode).ok_or("无效的机身性能模式")?;
-    let before = read_snapshot(io)?;
-    if mode != 1 && !(ac_online && before.dc_jack) {
-        return Err("均衡/狂暴模式需要连接原装电源".into());
-    }
-    let trigger = tongfang::mode_trigger(io.read(ADDR_TRIGGER_BYTE)?, mode);
-    // Keep firmware factory power and fan tables. The Windows-only GPU/NVAPI
-    // tuning and user RAM fan tables are separate capabilities.
-    transaction_commit(
-        io,
-        &[
-            (
-                ADDR_AP_OEM_BYTE,
-                io.read(ADDR_AP_OEM_BYTE)? | values::AP_PRESENT,
-            ),
-            (
-                ADDR_AC_RECOVERY,
-                io.read(ADDR_AC_RECOVERY)? & !MASK_QKEY_WHITE_1830,
-            ),
-            (
-                ADDR_CAMERA_CUTOFF,
-                io.read(ADDR_CAMERA_CUTOFF)? & !MASK_QKEY_WHITE_1831,
-            ),
-            (
-                ADDR_FAN_BOOST_CLAMP,
-                tongfang::fan_boost_value(base, before.fan_boost),
-            ),
-            (
-                ADDR_MODE_INDEX,
-                tongfang::mode_index(io.read(ADDR_MODE_INDEX)?, mode),
-            ),
-            (ADDR_TURBO_TRIGGER_1115, u8::from(mode == 1)),
-            (ADDR_CUSTOM_MODE, values::CUSTOM_OFF),
-            (
-                ADDR_FAN_RAMP_RATE,
-                if mode == 3 { 0 } else { values::RAMP_SMOOTH },
-            ),
-            (
-                ADDR_FAN_ISOLATED,
-                io.read(ADDR_FAN_ISOLATED)? & !values::FAN_ISOLATED,
-            ),
-        ],
-        Some(trigger),
-    )?;
-    // Trigger bits are consumed by firmware; comparing them with the command
-    // would wrongly report failure. Confirm stable mode flags afterwards.
-    if tongfang::decode_mode(io.read(ADDR_FAN_BOOST_CLAMP)?) != Some(mode)
-        || io.read(ADDR_CUSTOM_MODE)? != values::CUSTOM_OFF
-    {
-        return Err("机身模式未保持，可能被固件或另一个控制程序改写".into());
-    }
-    Ok(())
-}
-
-pub fn apply_limits(io: &impl EcIo, requested: CpuLimits, ac_online: bool) -> Result<(), String> {
-    let before = read_snapshot(io)?;
     if !(ac_online && before.dc_jack) {
         return Err("CPU 功耗调节需要连接原装电源".into());
     }
@@ -319,43 +250,6 @@ pub fn apply_limits(io: &impl EcIo, requested: CpuLimits, ac_online: bool) -> Re
         || pl4 > ceiling.pl4
     {
         return Err("功耗必须满足 PL1 ≤ PL2、PL4 ≥ PL2 + 20 W，且不超过 EC 出厂狂暴上限".into());
-    }
-    // Disable custom power before changing its table; firmware consumes the
-    // complete validated tuple only after the final custom-mode switch.
-    transaction(io, &[(ADDR_CUSTOM_MODE, values::CUSTOM_OFF)])?;
-    let trigger = tongfang::mode_trigger(io.read(ADDR_TRIGGER_BYTE)?, 2);
-    if let Err(error) = transaction_commit(
-        io,
-        &[
-            (
-                ADDR_AP_OEM_BYTE,
-                io.read(ADDR_AP_OEM_BYTE)? | values::AP_PRESENT,
-            ),
-            (
-                ADDR_MODE_INDEX,
-                tongfang::mode_index(io.read(ADDR_MODE_INDEX)?, 3),
-            ),
-            (ADDR_TURBO_TRIGGER_1115, 0),
-            (
-                ADDR_AC_RECOVERY,
-                io.read(ADDR_AC_RECOVERY)? | MASK_QKEY_WHITE_1830,
-            ),
-            (
-                ADDR_CAMERA_CUTOFF,
-                io.read(ADDR_CAMERA_CUTOFF)? | MASK_QKEY_WHITE_1831,
-            ),
-            (ADDR_CUSTOM_PL4, pl4),
-            (ADDR_CUSTOM_PL2, pl2),
-            (ADDR_CUSTOM_PL1, pl1),
-            (ADDR_CUSTOM_MODE, values::CUSTOM_ON),
-        ],
-        Some(trigger),
-    ) {
-        return Err(format!("{error}；已请求停用自定义功耗，请检查当前读回"));
-    }
-    let after = read_snapshot(io)?;
-    if !after.custom_power || after.limits != Some(requested) {
-        return Err("CPU 功耗被固件改写，请检查当前读回".into());
     }
     Ok(())
 }
@@ -379,6 +273,13 @@ impl LinuxEc {
     }
     pub fn snapshot(&mut self) -> OemSnapshot {
         self.heartbeat = Some(Instant::now());
+        let abi = control_abi();
+        let control_backend = match &abi {
+            Ok(Some(_)) => "semantic",
+            Ok(None) => "legacy",
+            Err(_) => "incompatible",
+        };
+        let control_fault = curve_flag("control_fault");
         let active = curve_flag("fan_curve_active");
         let fault = curve_flag("fan_curve_fault");
         if !active {
@@ -396,10 +297,21 @@ impl LinuxEc {
                 result.writable =
                     std::fs::read_to_string("/sys/module/openrevo_ec/parameters/allow_writes")
                         .map(|s| s.trim() == "Y")
-                        .unwrap_or(false);
-                result.error = self.last_error.clone();
+                        .unwrap_or(false)
+                        && matches!(abi, Ok(Some(_)))
+                        && !control_fault;
+                result.control_abi = abi.as_ref().ok().copied().flatten();
+                result.control_backend = control_backend;
+                result.control_fault = control_fault;
+                result.error = self
+                    .last_error
+                    .clone()
+                    .or_else(|| abi.as_ref().err().cloned());
+                if control_backend == "legacy" && result.error.is_none() {
+                    result.error = Some("当前 EC 驱动仅支持只读监测；请将 openrevo_ec 模块与应用配套升级后启用硬件控制".into());
+                }
                 result.fan_curve = CurveSnapshot {
-                    supported: curve_supported(),
+                    supported: matches!(abi, Ok(Some(_))) && curve_supported(),
                     active,
                     fault,
                     applied: self.fan_config.clone(),
@@ -408,12 +320,18 @@ impl LinuxEc {
                     result.error =
                         Some("风扇曲线恢复失败，驱动正在请求强冷并重试恢复；请检查风扇转速".into());
                 }
+                if control_fault {
+                    result.error = Some("机身控制事务恢复失败，驱动正在请求强冷并重试恢复；恢复前暂停功耗与模式调节".into());
+                }
                 result
             }
             Err(error) => OemSnapshot {
                 error: Some(error),
+                control_abi: abi.as_ref().ok().copied().flatten(),
+                control_backend,
+                control_fault,
                 fan_curve: CurveSnapshot {
-                    supported: curve_supported(),
+                    supported: matches!(abi, Ok(Some(_))) && curve_supported(),
                     active,
                     fault,
                     applied: self.fan_config.clone(),
@@ -429,11 +347,20 @@ impl LinuxEc {
         if mode != 1 && !ac {
             return Err("均衡/狂暴模式需要连接原装电源".into());
         }
+        require_control_abi()?;
         self.restore_curve()?;
-        apply_mode(self.connect()?, mode, ac)
+        self.send_control(control::MODE, [mode, 0, 0])
+    }
+    fn send_control(&mut self, action: usize, arguments: [u8; 3]) -> Result<(), String> {
+        let frame = control_frame(action, arguments)?;
+        require_control_abi()?;
+        self.connect()?
+            .write_all_at(&frame, control::REQUEST_OFFSET as u64)
+            .map_err(|e| format!("EC 语义控制失败：{e}；请检查供电、驱动状态和当前控制策略"))
     }
     fn send_curve(&mut self, action: usize, config: Option<&FanCurveConfig>) -> Result<(), String> {
         let frame = curve_frame(action, config)?;
+        require_control_abi()?;
         self.connect()?
             .write_all_at(&frame, protocol::REQUEST_OFFSET as u64)
             .map_err(|e| format!("风扇曲线操作失败：{e}；请检查驱动版本、供电和当前强冷状态"))
@@ -464,18 +391,19 @@ impl LinuxEc {
         if curve_flag("fan_curve_active") {
             return Err("请先恢复原风扇策略，再调整 CPU 功耗".into());
         }
-        apply_limits(self.connect()?, requested, ac)
+        require_control_abi()?;
+        let before = read_snapshot(self.connect()?)?;
+        validate_limits(&before, requested, ac)?;
+        self.send_control(
+            control::POWER,
+            [requested.pl1, requested.pl2, requested.pl4],
+        )
     }
     pub fn boost(&mut self, enabled: bool) -> Result<(), String> {
+        require_control_abi()?;
         let file = self.connect()?;
         let current = file.read(ADDR_FAN_BOOST_CLAMP)?;
-        transaction(
-            file,
-            &[(
-                ADDR_FAN_BOOST_CLAMP,
-                tongfang::fan_boost_value(current, enabled),
-            )],
-        )?;
+        self.send_control(control::BOOST, [u8::from(enabled), 0, 0])?;
         if self.original_boost.is_none() {
             self.original_boost = Some(current & FAN_BOOST_CLAMP_BIT != 0);
         }
@@ -483,13 +411,26 @@ impl LinuxEc {
         Ok(())
     }
     pub fn release(&mut self) -> Result<(), String> {
-        self.restore_curve()?;
-        if let Some(original) = self.original_boost {
-            self.boost(original)?;
-            self.original_boost = None;
+        if self.file.is_none() {
+            return Ok(());
         }
-        self.file = None; // Kernel release also restores boost after a crash.
-        Ok(())
+        let result = (|| {
+            if curve_flag("control_fault") {
+                self.send_control(control::RECOVER, [0; 3])?;
+            }
+            self.restore_curve()?;
+            if let Some(original) = self.original_boost {
+                self.boost(original)?;
+            }
+            Ok(())
+        })();
+        // Always close, even if a status read or restoration failed. Kernel
+        // release retains fault backups and provides the final restoration.
+        self.file = None;
+        self.original_boost = None;
+        self.fan_config = None;
+        self.heartbeat = None;
+        result
     }
     pub fn watchdog(&mut self) {
         if (self.original_boost.is_some() || self.fan_config.is_some())
@@ -513,179 +454,147 @@ impl Drop for LinuxEc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        cell::{Cell, RefCell},
-        collections::HashMap,
-    };
+    use std::collections::HashMap;
 
-    struct Fake {
-        registers: RefCell<HashMap<u16, u8>>,
-        writes: Cell<usize>,
-        fail_write: Cell<Option<usize>>,
-    }
-    impl Fake {
-        fn new() -> Self {
-            let mut registers = HashMap::new();
-            for (addresses, watts) in [
-                (
-                    [ADDR_OFFICE_PL1, ADDR_OFFICE_PL2, ADDR_OFFICE_PL4],
-                    [35, 35, 70],
-                ),
-                (
-                    [ADDR_BALANCE_PL1, ADDR_BALANCE_PL2, ADDR_BALANCE_PL4],
-                    [65, 65, 100],
-                ),
-                (
-                    [ADDR_TURBO_PL1, ADDR_TURBO_PL2, ADDR_TURBO_PL4],
-                    [90, 90, 100],
-                ),
-            ] {
-                for (address, value) in addresses.into_iter().zip(watts) {
-                    registers.insert(address, value);
-                }
-            }
-            registers.insert(ADDR_FAN_BOOST_CLAMP, values::OFFICE_CLAMP);
-            registers.insert(ADDR_CUSTOM_MODE, values::CUSTOM_OFF);
-            registers.insert(ADDR_POWER_STATUS, POWER_STATUS_DC_JACK);
-            Self {
-                registers: RefCell::new(registers),
-                writes: Cell::new(0),
-                fail_write: Cell::new(None),
-            }
-        }
-    }
-    impl EcIo for Fake {
-        fn read(&self, address: u16) -> Result<u8, String> {
-            Ok(*self.registers.borrow().get(&address).unwrap_or(&0))
-        }
-        fn write(&self, address: u16, value: u8) -> Result<(), String> {
-            let count = self.writes.get() + 1;
-            self.writes.set(count);
-            self.registers.borrow_mut().insert(address, value);
-            if self.fail_write.get() == Some(count) {
-                Err("injected post-write failure".into())
-            } else {
-                Ok(())
-            }
-        }
-    }
     #[test]
-    fn battery_and_usb_c_cannot_enable_high_power() {
-        let io = Fake::new();
-        assert!(apply_mode(&io, 2, false).is_err());
-        assert!(apply_mode(&io, 3, false).is_err());
-        assert!(apply_limits(
-            &io,
-            CpuLimits {
+    fn semantic_frames_have_fixed_layout_and_reject_invalid_arguments() {
+        let frame = control_frame(control::POWER, [45, 55, 80]).unwrap();
+        assert_eq!(frame[control::VERSION_OFFSET], control::VERSION as u8);
+        assert_eq!(frame[control::ACTION_OFFSET], control::POWER as u8);
+        assert_eq!(
+            &frame[control::ARGUMENT_OFFSET..control::RESERVED_OFFSET],
+            &[45, 55, 80]
+        );
+        assert!(frame[control::RESERVED_OFFSET..]
+            .iter()
+            .all(|byte| *byte == 0));
+        assert!(control_frame(control::POWER, [65, 35, 80]).is_err());
+        assert!(control_frame(control::POWER, [45, 55, 60]).is_err());
+        assert!(control_frame(control::POWER, [240, 250, 255]).is_err());
+        assert!(control_frame(control::MODE, [0, 0, 0]).is_err());
+        assert!(control_frame(control::MODE, [3, 1, 0]).is_err());
+        assert!(control_frame(control::BOOST, [2, 0, 0]).is_err());
+        assert!(control_frame(control::RECOVER, [1, 0, 0]).is_err());
+        assert!(control_frame(control::BOOST, [1, 0, 0]).is_ok());
+        assert!(control_frame(control::RECOVER, [0; 3]).is_ok());
+    }
+
+    #[test]
+    fn old_unknown_and_unreadable_control_abi_never_allow_writes() {
+        use std::io::{Error, ErrorKind};
+        let missing = parse_control_abi(Err(Error::from(ErrorKind::NotFound))).unwrap();
+        assert_eq!(missing, None);
+        assert!(require_control_version(missing).is_err());
+        assert_eq!(
+            parse_control_abi(Ok(format!("{}\n", control::VERSION))).unwrap(),
+            Some(control::VERSION)
+        );
+        assert!(require_control_version(Some(control::VERSION)).is_ok());
+        assert!(require_control_version(Some(control::VERSION + 1)).is_err());
+        assert!(parse_control_abi(Err(Error::from(ErrorKind::PermissionDenied))).is_err());
+        assert!(parse_control_abi(Err(Error::from(ErrorKind::Interrupted))).is_err());
+        assert!(parse_control_abi(Ok("invalid".into())).is_err());
+        assert!(parse_control_abi(Ok("0".into())).is_err());
+        assert!(parse_control_abi(Ok((control::VERSION + 1).to_string())).is_err());
+    }
+
+    struct ReadOnlyEc(HashMap<u16, u8>);
+    impl EcIo for ReadOnlyEc {
+        fn read(&self, address: u16) -> Result<u8, String> {
+            Ok(*self.0.get(&address).unwrap_or(&0))
+        }
+    }
+    fn fixture() -> ReadOnlyEc {
+        let mut registers = HashMap::new();
+        for (addresses, values) in [
+            (
+                [ADDR_OFFICE_PL1, ADDR_OFFICE_PL2, ADDR_OFFICE_PL4],
+                [35, 35, 70],
+            ),
+            (
+                [ADDR_BALANCE_PL1, ADDR_BALANCE_PL2, ADDR_BALANCE_PL4],
+                [65, 65, 100],
+            ),
+            (
+                [ADDR_TURBO_PL1, ADDR_TURBO_PL2, ADDR_TURBO_PL4],
+                [90, 90, 100],
+            ),
+        ] {
+            registers.extend(addresses.into_iter().zip(values));
+        }
+        registers.insert(ADDR_FAN_BOOST_CLAMP, values::OFFICE_CLAMP);
+        registers.insert(ADDR_CUSTOM_MODE, values::CUSTOM_OFF);
+        registers.insert(ADDR_POWER_STATUS, POWER_STATUS_DC_JACK);
+        registers.insert(ADDR_MAIN_FAN_RPM_B1, 10);
+        registers.insert(ADDR_MAIN_FAN_RPM_B2, 20);
+        ReadOnlyEc(registers)
+    }
+
+    #[test]
+    fn telemetry_and_factory_limits_are_available_without_any_write_primitive() {
+        let mut io = fixture();
+        let status = read_snapshot(&io).unwrap();
+        assert_eq!(status.mode, Some(1));
+        assert_eq!(status.fan_rpm[0], u16::from_be_bytes([10, 20]));
+        assert_eq!(
+            status.limits,
+            Some(CpuLimits {
                 pl1: 35,
                 pl2: 35,
                 pl4: 70
-            },
-            false
-        )
-        .is_err());
-        io.registers.borrow_mut().insert(ADDR_POWER_STATUS, 0);
-        assert!(apply_mode(&io, 3, true).is_err());
-        assert_eq!(io.writes.get(), 0);
-    }
-    #[test]
-    fn malformed_limits_do_not_write_anything() {
-        let io = Fake::new();
-        for limits in [
-            CpuLimits {
-                pl1: 5,
-                pl2: 35,
-                pl4: 70,
-            },
-            CpuLimits {
-                pl1: 65,
-                pl2: 35,
-                pl4: 70,
-            },
-            CpuLimits {
-                pl1: 90,
-                pl2: 90,
-                pl4: 100,
-            },
-            CpuLimits {
-                pl1: 65,
-                pl2: 65,
-                pl4: 120,
-            },
-        ] {
-            assert!(apply_limits(&io, limits, true).is_err());
-        }
-        assert_eq!(io.writes.get(), 0);
-    }
-    #[test]
-    fn fault_restores_even_write_that_reported_failure() {
-        let io = Fake::new();
-        let addresses = [ADDR_CUSTOM_PL4, ADDR_CUSTOM_PL2, ADDR_CUSTOM_PL1];
-        for fail in 1..=3 {
-            io.writes.set(0);
-            io.fail_write.set(Some(fail));
-            let changes: Vec<_> = addresses.iter().map(|a| (*a, 70)).collect();
-            assert!(transaction(&io, &changes).is_err());
-            for address in addresses {
-                assert_eq!(io.read(address).unwrap(), 0);
-            }
-        }
-    }
-    #[test]
-    fn mode_preserves_lighting_usb_and_fan_boost() {
-        let io = Fake::new();
-        io.registers
-            .borrow_mut()
-            .insert(ADDR_MODE_INDEX, values::MODE_PRESERVE);
-        io.registers
-            .borrow_mut()
-            .insert(ADDR_TRIGGER_BYTE, TRIGGER_USB_CHARGE);
-        io.registers.borrow_mut().insert(
-            ADDR_FAN_BOOST_CLAMP,
-            values::OFFICE_CLAMP | FAN_BOOST_CLAMP_BIT,
+            })
         );
-        apply_mode(&io, 3, true).unwrap();
+        assert!(!status.writable);
+        io.0.insert(ADDR_CUSTOM_MODE, values::CUSTOM_ON);
+        io.0.insert(ADDR_CUSTOM_PL1, 45);
+        io.0.insert(ADDR_CUSTOM_PL2, 55);
+        io.0.insert(ADDR_CUSTOM_PL4, 80);
+        let custom = read_snapshot(&io).unwrap();
+        assert!(custom.custom_power);
         assert_eq!(
-            io.read(ADDR_MODE_INDEX).unwrap() & values::MODE_PRESERVE,
-            values::MODE_PRESERVE
+            custom.limits,
+            Some(CpuLimits {
+                pl1: 45,
+                pl2: 55,
+                pl4: 80
+            })
         );
-        assert_ne!(io.read(ADDR_TRIGGER_BYTE).unwrap() & TRIGGER_USB_CHARGE, 0);
-        assert!(read_snapshot(&io).unwrap().fan_boost);
-        assert_eq!(read_snapshot(&io).unwrap().mode, Some(3));
+        io.0.insert(ADDR_TURBO_PL1, 0);
+        assert!(read_snapshot(&io).is_err());
     }
+
     #[test]
-    fn complete_tuple_activates_custom_and_mode_restores_factory() {
-        let io = Fake::new();
+    fn frontend_validation_keeps_factory_ceiling_and_supply_rules() {
+        let mut status = read_snapshot(&fixture()).unwrap();
         let requested = CpuLimits {
             pl1: 45,
             pl2: 55,
             pl4: 80,
         };
-        apply_limits(&io, requested, true).unwrap();
-        let custom = read_snapshot(&io).unwrap();
-        assert!(custom.custom_power);
-        assert_eq!(custom.limits, Some(requested));
-        apply_mode(&io, 1, false).unwrap();
-        let factory = read_snapshot(&io).unwrap();
-        assert!(!factory.custom_power);
-        assert_eq!(factory.limits, Some(factory.presets[0]));
-    }
-    #[test]
-    fn invalid_factory_data_stops_mode_before_any_write() {
-        let io = Fake::new();
-        io.registers.borrow_mut().insert(ADDR_TURBO_PL1, 0);
-        assert!(apply_mode(&io, 1, false).is_err());
-        assert_eq!(io.writes.get(), 0);
-    }
-    #[test]
-    fn trigger_failure_restores_previous_mode() {
-        let reference = Fake::new();
-        apply_mode(&reference, 3, true).unwrap();
-        let io = Fake::new();
-        io.fail_write.set(Some(reference.writes.get()));
-        assert!(apply_mode(&io, 3, true).is_err());
-        assert_eq!(read_snapshot(&io).unwrap().mode, Some(1));
-        assert_eq!(io.read(ADDR_CUSTOM_MODE).unwrap(), values::CUSTOM_OFF);
-        assert_eq!(io.read(ADDR_MODE_INDEX).unwrap(), 0);
+        assert!(validate_limits(&status, requested, true).is_ok());
+        assert!(validate_limits(&status, requested, false).is_err());
+        status.dc_jack = false;
+        assert!(validate_limits(&status, requested, true).is_err());
+        status.dc_jack = true;
+        assert!(validate_limits(
+            &status,
+            CpuLimits {
+                pl1: 90,
+                pl2: 90,
+                pl4: 100
+            },
+            true
+        )
+        .is_err());
+        assert!(validate_limits(
+            &status,
+            CpuLimits {
+                pl1: 45,
+                pl2: 55,
+                pl4: 120
+            },
+            true
+        )
+        .is_err());
     }
 }

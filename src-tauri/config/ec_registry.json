@@ -221,21 +221,7 @@
     "ADDR_CUSTOM_PL2",
     "ADDR_CUSTOM_PL4"
   ],
-  "linux_ec_write": [
-    "ADDR_AP_OEM_BYTE",
-    "ADDR_TRIGGER_BYTE",
-    "ADDR_MODE_INDEX",
-    "ADDR_AC_RECOVERY",
-    "ADDR_CAMERA_CUTOFF",
-    "ADDR_CUSTOM_MODE",
-    "ADDR_FAN_RAMP_RATE",
-    "ADDR_FAN_ISOLATED",
-    "ADDR_FAN_BOOST_CLAMP",
-    "ADDR_TURBO_TRIGGER_1115",
-    "ADDR_CUSTOM_PL1",
-    "ADDR_CUSTOM_PL2",
-    "ADDR_CUSTOM_PL4"
-  ],
+  "linux_ec_write": [],
   "linux_fan": {
     "VERSION": 1,
     "FRAME_SIZE": 100,
@@ -262,5 +248,27 @@
     "OFFICE_CLAMP": 160,
     "BALANCED_CLAMP": 0,
     "TURBO_CLAMP": 16
+  },
+  "linux_control": {
+    "VERSION": 1,
+    "FRAME_SIZE": 8,
+    "REQUEST_OFFSET": 1,
+    "VERSION_OFFSET": 0,
+    "ACTION_OFFSET": 1,
+    "ARGUMENT_OFFSET": 2,
+    "RESERVED_OFFSET": 5,
+    "MODE": 1,
+    "POWER": 2,
+    "BOOST": 3,
+    "RECOVER": 4,
+    "AP_PRESENT": 1,
+    "MODE_PRESERVE": 225,
+    "MODE_TURBO": 16,
+    "MODE_STATUS_IDLE": 0,
+    "MODE_STATUS_REQUEST": 1,
+    "RAMP_SMOOTH": 131,
+    "MIN_POWER": 15,
+    "POWER_INVALID": 255,
+    "PL4_MARGIN": 20
   }
 }

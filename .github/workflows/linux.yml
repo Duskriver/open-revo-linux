@@ -1,4 +1,4 @@
-name: Linux port
+name: Linux
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
       - name: Verify hardware vault boundary
         run: python3 scripts/check_vault_leaks.py
       - name: Test hardware vault gate
-        run: python3 -m unittest discover -s tests -p 'test_vault_gate.py' -v
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11
       - run: pnpm install --frozen-lockfile
       - run: pnpm linux:check
-      - run: make -C src-tauri/src/hal/linux test
+      - run: make -C drivers/openrevo-ec test
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -p openrevo-core --all-targets -- -D warnings
       - name: Build native test application
         run: pnpm tauri build --debug --no-bundle
@@ -47,8 +47,10 @@ jobs:
         run: cargo install tauri-driver --locked
       - name: Test native window
         run: dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
-      - name: Build Debian package
+      - name: Build Debian application package
         run: pnpm linux:build
+      - name: Build independent DKMS package
+        run: pnpm linux:driver:build
       - name: Verify Debian package contents
         run: |
           python3 - <<'PY'
@@ -57,7 +59,7 @@ jobs:
           from pathlib import Path
           import subprocess
           import tarfile
-          version = json.loads(Path('src-tauri/tauri.linux.conf.json').read_text())['version']
+          version = json.loads(Path('src-tauri/tauri.conf.json').read_text())['version']
           package = Path(f'src-tauri/target/release/bundle/deb/OpenRevo_{version}_amd64.deb')
           actual = subprocess.check_output(['dpkg-deb', '--field', str(package), 'Version'], text=True).strip()
           assert actual == version, f'Unexpected package version: {actual}'
@@ -75,27 +77,23 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/open-revo
             test-results/linux-window.png
+            dist_release/openrevo-ec-dkms_*.deb
 
-  windows-check:
-    name: Windows compile regression
-    runs-on: windows-latest
+  kernel:
+    name: Kernel module (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Verify hardware vault boundary
-        shell: pwsh
-        run: ./scripts/check_vault_leaks.ps1
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets --all-features --locked
+      - name: Install kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-generic
+      - name: Build module without loading hardware
+        run: |
+          headers=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' | sort -V | tail -n 1)
+          test -n "$headers"
+          make -C drivers/openrevo-ec KDIR="$headers"

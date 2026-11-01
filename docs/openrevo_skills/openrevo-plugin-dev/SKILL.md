@@ -3,6 +3,8 @@ name: openrevo-plugin-dev
 description: Official OpenRevo expert agent skill for developing third-party plugins, custom themes, wallpapers, desktop widgets, and slot extensions with zero hallucinations.
 ---
 
+> 历史参考：本文对应上游 Windows 实现。当前 Linux 分支不提供这里的插件或 models.json 接口；Linux 功能与开发入口请以仓库 README 和 docs/linux-port.md 为准。
+
 # OpenRevo 官方插件与主题扩展开发 Agent 指南 (OpenRevo Plugin Dev Skill)
 
 > **设计宗旨**：本 Skill 是 OpenRevo 官方权威 Agentic 规范，专供 AI Agent 与高阶极客使用。旨在指导任何代码助手（Antigravity、Claude Code、Cursor、Copilot 等）以**零假幻觉、零二手失真、100% 贴合宿主真值**的方式开发和审计 OpenRevo 的第三方插件。

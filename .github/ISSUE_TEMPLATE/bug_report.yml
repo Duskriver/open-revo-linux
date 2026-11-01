@@ -48,7 +48,7 @@ body:
     id: operating-system
     attributes:
       label: 操作系统及版本
-      placeholder: 例如：Windows 11
+      placeholder: 例如：Ubuntu 26.04 / 内核 7.0 / GNOME Wayland
   - type: input
     id: app-version
     attributes:

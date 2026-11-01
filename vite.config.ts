@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { execSync } from 'child_process';
-import pkg from './package.json';
+import app from './src-tauri/tauri.conf.json';
 
 const getGitCommitHash = (): string => {
   try {
@@ -12,13 +12,13 @@ const getGitCommitHash = (): string => {
 };
 
 const gitHash = getGitCommitHash();
-const appVersion = gitHash ? `${pkg.version}-${gitHash}` : pkg.version;
+const appVersion = gitHash ? `${app.version}-${gitHash}` : app.version;
 
 export default defineConfig({
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
-    __RAW_VERSION__: JSON.stringify(pkg.version),
+    __RAW_VERSION__: JSON.stringify(app.version),
     __GIT_COMMIT__: JSON.stringify(gitHash),
   },
   clearScreen: false,
@@ -31,7 +31,7 @@ export default defineConfig({
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
-    target: process.env.TAURI_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
+    target: 'safari13',
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
   },

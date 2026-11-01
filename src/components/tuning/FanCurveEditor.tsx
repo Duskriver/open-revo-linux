@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useId } from 'react';
 import { Wind, Link2, Link2Off, Plus, Minus, Fan, ChevronDown } from 'lucide-react';
-import { FanCurvePoint } from '../../types/hardware';
+import type { FanCurvePoint } from '../../types/controls';
 import { RevSwitch } from '../ui/RevSwitch';
 
 export interface FanCurveEditorProps {

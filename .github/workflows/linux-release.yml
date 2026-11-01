@@ -22,8 +22,7 @@ jobs:
           import os
           from pathlib import Path
           base = json.loads(Path('src-tauri/tauri.conf.json').read_text())
-          linux = json.loads(Path('src-tauri/tauri.linux.conf.json').read_text())
-          version = linux.get('version', base['version'])
+          version = base['version']
           assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag and Linux package version differ'
           assert '-linux.' in version, 'Expected a Linux preview version'
           PY
@@ -56,14 +55,19 @@ jobs:
           root = Path('dist_release')
           tag = os.environ['RELEASE_TAG']
           debs = list((root / 'ci').rglob('*.deb'))
-          assert len(debs) == 1, 'Expected exactly one Debian package'
-          package = root / debs[0].name
-          shutil.copy2(debs[0], package)
+          assert len(debs) == 2, 'Expected application and DKMS packages'
+          assert sum(p.name.startswith('openrevo-ec-dkms_') for p in debs) == 1
+          assert sum(p.name.startswith('OpenRevo_') for p in debs) == 1
+          packages = []
+          for deb in debs:
+              package = root / deb.name
+              shutil.copy2(deb, package)
+              packages.append(package)
           source = root / f'OpenRevo-{tag}-source.tar.gz'
           subprocess.run(['git', 'archive', '--format=tar.gz',
                           f'--prefix=open-revo-linux-{tag}/',
                           f'--output={source}', 'HEAD'], check=True)
-          files = (package, source)
+          files = (*packages, source)
           (root / 'SHA256SUMS').write_text(''.join(
               f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n' for path in files
           ))

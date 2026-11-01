@@ -1,4 +1,4 @@
-import type { FanCurvePoint } from './hardware';
+import type { FanCurvePoint } from './controls';
 export interface LinuxSensor {
   id: string;
   device: string;
@@ -81,6 +81,9 @@ export interface LinuxPowerLimit {
 
 export interface CpuLimits { pl1: number; pl2: number; pl4: number }
 export interface LinuxOemSnapshot {
+  control_abi?: number | null;
+  control_backend?: string;
+  control_fault?: boolean;
   available: boolean;
   writable: boolean;
   error: string | null;

@@ -1,0 +1,24 @@
+OpenRevo EC driver for Ubuntu and Debian
+======================================
+
+This package contains the source for the model-verified OpenRevo EC driver.
+It requires headers matching the kernel you intend to use. DKMS builds and
+installs the module for available kernels and rebuilds it after kernel upgrades.
+Read installation output: missing kernel headers can defer the module build.
+
+Secure Boot signing uses the distribution's DKMS configuration and keys.
+Complete its MOK enrollment procedure if requested. This package does not
+disable Secure Boot, generate its own signing policy, or enroll keys silently.
+
+The application and driver must support the same control ABI. Close the
+application and reboot after an upgrade to activate the newly built module.
+Package installation and removal never force an active module to unload.
+
+Old manual installations under /lib/modules/<kernel>/extra/openrevo must be
+resolved before configuring this package. Its maintainer scripts report such
+files and leave them intact. Do not operate two copies of the controller.
+
+Run the graphical application as the desktop user. The udev rule grants device
+access to the active local session. The driver itself limits the supported
+machine and BIOS and validates hardware commands. Unknown models remain
+unsupported by the EC module; standard Linux telemetry is independent of it.

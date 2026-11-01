@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { useEffect, useRef, useState } from 'react';
 import { Activity, BatteryCharging, Download, Fan, Monitor, RefreshCw, Sliders, Zap } from 'lucide-react';
 import { RevCard } from './ui/RevCard';
 import { DashboardChrome } from './common/DashboardChrome';
@@ -8,11 +7,12 @@ import { ModeSelector } from './ModeSelector';
 import { CpuPlSliderRow } from './tuning/CpuPlSliderRow';
 import { ModuleErrorBoundary } from './ModuleErrorBoundary';
 import { SponsorView } from './SponsorView';
-import { BUILTIN_MODULE_SLOTS } from '../plugins/plugin_manifest';
+import { useLinuxBackend } from '../hooks/useLinuxBackend';
+import { LINUX_TABS } from './linux/navigation';
 import { LinuxPowerLimit, LinuxSnapshot } from '../types/linux';
 import { OemFanCurve } from './linux/OemFanCurve';
 import { OemCooling, OemModes, OemPower } from './linux/OemHardwareControls';
-import { PowerMode } from '../types/hardware';
+import type { PowerMode } from '../types/controls';
 
 const profileNames: Record<string, string> = {
   'power-saver': '节能', 'low-power': '节能', quiet: '静音', cool: '低温', balanced: '均衡',
@@ -76,65 +76,15 @@ function telemetry(status: LinuxSnapshot | null): HardwareTelemetry {
 }
 
 export default function LinuxDashboard() {
-  const [status, setStatus] = useState<LinuxSnapshot | null>(null);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [autostart, setAutostart] = useState<boolean | null>(null);
+  const { status, connectionError, error, busy, autostart, native, refresh, act, clearError, setAutostartEnabled } = useLinuxBackend();
   const [activeTab, setActiveTab] = useState('overview');
   const [theme, setTheme] = useState<'mono' | 'cyber'>(() => localStorage.getItem('openrevo_theme') === 'cyber' ? 'cyber' : 'mono');
-  const pending = useRef<Promise<void> | null>(null);
-  const acting = useRef(false);
-  const mounted = useRef(true);
-  const native = isTauri();
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.windowMode = 'full';
     localStorage.setItem('openrevo_theme', theme);
   }, [theme]);
-
-  const refresh = useCallback((): Promise<void> => {
-    if (pending.current) return pending.current;
-    if (!native) { setConnectionError('请通过 pnpm linux:dev 启动桌面程序，浏览器预览无法读取本机硬件。'); return Promise.resolve(); }
-    const task = (async () => {
-      try {
-        const next = await invoke<LinuxSnapshot>('get_linux_status');
-        if (mounted.current) { setStatus(next); setConnectionError(null); }
-      } catch (e) { if (mounted.current) setConnectionError(String(e)); }
-      finally { pending.current = null; }
-    })();
-    pending.current = task;
-    return task;
-  }, [native]);
-
-  useEffect(() => {
-    mounted.current = true;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => { await refresh(); if (!cancelled) timer = setTimeout(poll, 2000); };
-    void poll();
-    if (native) invoke<boolean>('get_autostart_enabled').then(v => {
-      if (mounted.current) setAutostart(v);
-    }).catch(e => { if (mounted.current) setError(`读取登录启动设置失败：${e}`); });
-    return () => { cancelled = true; mounted.current = false; clearTimeout(timer); };
-  }, [native, refresh]);
-
-  const act = async (command: string, args: Record<string, unknown>): Promise<boolean> => {
-    if (acting.current || !native) return false;
-    acting.current = true; setBusy(true); setError(null);
-    let success = false;
-    try { await invoke(command, args); success = true; }
-    catch (e) { if (mounted.current) setError(String(e)); }
-    finally {
-      // A poll started before the write cannot confirm its result. Always fetch
-      // a new snapshot afterwards, including after a partial driver failure.
-      if (pending.current) await pending.current;
-      await refresh(); acting.current = false;
-      if (mounted.current) setBusy(false);
-    }
-    return success;
-  };
 
   const exportDiagnostics = () => {
     if (!status) return;
@@ -212,13 +162,13 @@ export default function LinuxDashboard() {
   return <main className="acrylic-container openrevo-shell linux-shell" data-slot="shell" data-theme={theme}>
     <DashboardChrome theme={theme} onToggleTheme={() => setTheme(theme === 'mono' ? 'cyber' : 'mono')}
       versionLabel="LINUX" activeTab={activeTab} onSelectTab={setActiveTab}
-      tabs={BUILTIN_MODULE_SLOTS.map(slot => ({ id: slot.id, name: slot.name, className: slot.tabClassName, icon: <slot.icon size={14} /> }))}
+      tabs={LINUX_TABS}
       actions={<><button className="toggle-btn" onClick={() => void refresh()} aria-label="刷新"><RefreshCw size={14} /></button>
         <button className="toggle-btn" onClick={exportDiagnostics} disabled={!status}><Download size={14} />导出诊断</button></>} />
     <div className="shell-viewport" data-slot="viewport">
       <div className="linux-page-stack">
         {(error || connectionError) && <div className="linux-error" role="alert">{error || connectionError}
-          {error && <button className="toggle-btn" onClick={() => setError(null)}>关闭</button>}</div>}
+          {error && <button className="toggle-btn" onClick={clearError}>关闭</button>}</div>}
         <div className="linux-status"><Activity size={14} />{connectionError ? '连接中断 · 以下为上次数据' : status ? '已连接本机 · 每 2 秒更新' : '正在连接本机硬件…'}
           <span>{status?.model ?? '等待机型信息'}</span><span>{status?.ac_online == null ? '供电状态未知' : status.ac_online ? '外接电源' : '电池供电'}</span></div>
         <ModuleErrorBoundary key={activeTab} moduleName={activeTab} onNavigateToOverview={() => setActiveTab('overview')}>
@@ -234,9 +184,10 @@ export default function LinuxDashboard() {
           {activeTab === 'system' && <div className="linux-page-stack"><RevCard title="系统设置"><div className="sys-rows">
             <div className="quick-row"><div><div className="sys-row-label">登录时启动</div><div className="sys-row-desc">登录桌面后自动启动 OpenRevo</div></div>
               <label className="sys-row-controls"><input type="checkbox" aria-label="登录时启动" checked={autostart ?? false} disabled={busy || !native || autostart == null}
-                onChange={async e => { const enabled = e.target.checked; if (await act('set_autostart_enabled', { enabled })) setAutostart(enabled); }} /></label></div>
+                onChange={e => void setAutostartEnabled(e.target.checked)} /></label></div>
             <div className="quick-row"><span className="sys-row-label">主板 / BIOS</span><span>{status?.board ?? '未提供'} / {status?.bios ?? '未提供'}</span></div>
             <div className="quick-row"><span className="sys-row-label">Linux 内核</span><span>{status?.kernel ?? '未提供'}</span></div>
+            <div className="quick-row"><span className="sys-row-label">EC 控制协议</span><span>{!status?.oem.available ? '未接入' : status.oem.control_abi == null ? '需更新驱动 · 当前仅监测' : `ABI ${status.oem.control_abi}${status.oem.control_fault ? ' · 正在恢复故障' : ''}`}</span></div>
           </div></RevCard><RevCard title="硬件支持状态" subtitle="接口存在与当前进程有写入权限分别检查">
             <div className="linux-capabilities">{status?.capabilities.map(c => <div key={c.id} className="linux-capability">
               <span className={c.available ? 'linux-available' : 'linux-muted'}>{c.available ? '● 已检测到' : '○ 未接入'}</span><strong>{c.name}</strong><p>{c.detail}</p>

@@ -1,30 +1,31 @@
-# OpenRevo for Linux v0.9.3-linux.1 — 社区预览版
+# OpenRevo for Linux — Linux-only 重构预览
 
-基于 [faintonce/open-revo](https://github.com/faintonce/open-revo) 的社区 Linux 移植，由 [Duskriver](https://github.com/Duskriver) 维护，沿用 GPL-3.0-or-later 许可。
+基于 [faintonce/open-revo](https://github.com/faintonce/open-revo)，保留上游来源与 GPL-3.0-or-later 许可，由 [Duskriver](https://github.com/Duskriver) 维护。
 
-## 本次提供
+此文件描述当前开发分支及本机验证结果，不能视为已发布版本的验证报告。本轮未发布新 Release；下次发布应使用新的版本与 Tag。
 
-- Tauri 原生 Linux 桌面窗口、主题切换、诊断导出与登录启动入口。
-- 通过 Linux 标准接口读取 CPU、内存、温度、电源与电池状态。
-- 在系统支持且授权允许时切换系统电源档位、调节背光和设置电池限充。
-- x86_64 Debian 安装包、对应源码归档和 SHA-256 校验文件。
+## 变化
 
-## 安装
+- Linux 唯一前端与 Rust 入口，类型化 IPC，宿主不再重复实现核心硬件逻辑。
+- 保留监控、主题、诊断、自启动、系统档位、背光及内核公开的限充接口。
+- GM5HG7A 驱动改用内核模式/功耗/强冷事务，关闭原始寄存器写入口；应用与驱动要求协议版本匹配。
+- 独立 DKMS 源码包，内核升级重编译使用发行版机制；安装脚本不强卸载活跃模块。
+- 分发包含应用 `.deb`、驱动 `.deb`、对应源码及 SHA-256 校验。
+- 实机修正固件提交后消费静音请求标志所导致的误报回滚，其他稳定字段及传输失败继续严格校验。
 
-下载本页 `.deb`，在文件所在目录运行（将文件名替换为实际下载的名称）：
+## 安装和升级
 
-```sh
-sudo apt install ./OpenRevo_0.9.3-linux.1_amd64.deb
-```
+GUI 以普通用户运行。应用包依赖 GTK3、WebKitGTK 4.1 和 Ayatana AppIndicator。需要 OEM 控制时，按 [驱动安装与升级说明](linux-port.md#独立-ec-驱动包) 安装配套 DKMS 包。
 
-安装后通过桌面应用启动器以普通用户运行。包由 Ubuntu 22.04 CI 构建，依赖 GTK3、WebKitGTK 4.1 和 Ayatana AppIndicator。其他发行版可按仓库 Linux 文档从源码构建。
+旧模块只能监测，控制功能需要新驱动。旧手工安装副本会阻止 DKMS 配置，必须先按文档备份并处理冲突。Secure Boot 需要完成系统要求的签名和 MOK 登记。包升级不会替换当前正在运行的模块，重启后生效。
 
-## 已知限制
+## 验证边界
 
-- 这是开发预览版，尚未达到上游 Windows 版的硬件功能完整度。
-- EC 风扇曲线、OEM 功耗调节、模式灯、RGB、水冷、显卡 MUX 和 Linux 自动更新仍待移植。
-- 系统电源档位不等于 OEM EC 模式；可用操作取决于机型、内核接口和 Polkit 授权。
-- 实机验证环境为 GM5HG7A / Ryzen 7 8845H / Ubuntu 26.04.1，未完成所有机型和发行版兼容性测试。
-- Windows 编译检查用于验证平台隔离，不能替代 Windows 实机回归测试。
+- 新驱动只匹配 MECHREVO / GM5HG7A / BIOS N.1.09MRO19。
+- 2026-11-01 已安装配套新应用与 DKMS 驱动。新事务驱动连续 5 次办公模式验证通过，5 秒强冷读数为 5183/5135 RPM，释放后恢复且无故障；旧模块、配置及应用文件保留回退备份。
+- 接电下均衡、狂暴和 35/35/70 W 自定义功耗写入/读回通过，结束后恢复测试前均衡模式；系统安装后的原生窗口回归 10 项通过，2 项系统/平台档位真实写回按默认策略跳过。
+- 接电功耗效果、自定义曲线带载散热、其他 BIOS/机型尚未完成验证。
+- RGB、水冷、GPU MUX 和 Linux 插件仍待实现。
+- 系统性能档位与 OEM EC 模式不是同一个接口。
 
-源码和构建步骤见本页源码归档中的 `docs/linux-port.md`；问题反馈请使用 [本 Fork Issues](https://github.com/Duskriver/open-revo-linux/issues)，附上发行版、内核、机型和复现步骤。
+完整功能、构建和验证流程见 [Linux 文档](linux-port.md)，阶段证据见 [重构记录](linux-refactor.md)。

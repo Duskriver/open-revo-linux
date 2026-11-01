@@ -1,6 +1,11 @@
-import { POWER_MODES, PowerMode } from '../types/hardware';
-import { ModelCapabilities } from '../plugins/plugin_manifest';
+import { POWER_MODES, PowerMode } from '../types/controls';
 import { Shield, Zap, Flame, Sliders, Settings2 } from 'lucide-react';
+
+interface ModeCapabilities {
+  form_factor?: string;
+  is_adapted?: boolean;
+  power_modes?: string[];
+}
 
 interface ModeSelectorProps {
   currentMode: PowerMode | number;
@@ -9,7 +14,7 @@ interface ModeSelectorProps {
   isDcOnline?: boolean;
   unlockBatteryLimit?: boolean;
   onOpenCustomTuning?: () => void;
-  capabilities?: ModelCapabilities;
+  capabilities?: ModeCapabilities;
   isThinLight?: boolean;
   unavailableModes?: Partial<Record<PowerMode, string>>;
   modeLabels?: Partial<Record<PowerMode, string>>;

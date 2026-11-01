@@ -2,7 +2,9 @@
 """Smoke test the actual Linux Tauri/WebKit window using W3C WebDriver.
 
 Requires tauri-driver, WebKitWebDriver and a display (or xvfb-run).
-Does not change hardware settings or login startup preferences.
+Hardware writes are disabled by default. Set OPENREVO_TEST_HARDWARE_WRITES=1
+only for an explicitly authorized current-value write/readback check.
+UI fixtures never write hardware or change login startup preferences.
 """
 import base64
 from http.client import HTTPException
@@ -19,6 +21,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 PORT = int(os.environ.get("OPENREVO_WEBDRIVER_PORT", "4444"))
 URL = f"http://127.0.0.1:{PORT}"
+HARDWARE_WRITES = os.environ.get("OPENREVO_TEST_HARDWARE_WRITES") == "1"
 
 
 def request(method, path, data=None):
@@ -81,6 +84,17 @@ class LinuxWindow(unittest.TestCase):
     @classmethod
     def execute(cls, script):
         return request("POST", f"/session/{cls.session}/execute/sync", {"script": script, "args": []})
+
+    def wait_for_status_fixture(self, model):
+        # Installing the fetch interceptor does not finish an in-flight native
+        # poll. Wait for this fixture to render before asserting its controls.
+        text = ""
+        for _ in range(100):
+            text = self.execute("return document.querySelector('.linux-status')?.textContent ?? '';")
+            if model in text:
+                return
+            time.sleep(0.1)
+        self.fail(f"Status fixture {model!r} did not reach the UI: {text}")
 
     def test_native_hardware_snapshot_and_capabilities(self):
         text = self.execute("return document.body.innerText;")
@@ -150,6 +164,7 @@ class LinuxWindow(unittest.TestCase):
             time.sleep(0.1)
         self.fail("Native IPC command did not complete")
 
+    @unittest.skipUnless(HARDWARE_WRITES, "Real profile writes require explicit opt-in")
     def test_native_profile_permissions_and_readback(self):
         self.execute("""
             window.__profileReadback = null;
@@ -182,6 +197,7 @@ class LinuxWindow(unittest.TestCase):
             time.sleep(0.1)
         self.fail("Profile write/readback did not complete")
 
+    @unittest.skipUnless(HARDWARE_WRITES, "Real platform writes require explicit opt-in")
     def test_platform_profile_current_value_readback(self):
         # Only write the current value when both policy layers already agree.
         self.execute("""
@@ -312,6 +328,7 @@ class LinuxWindow(unittest.TestCase):
             window.__oemReady = false;
             (async () => {
               const snapshot = await window.__TAURI_INTERNALS__.invoke('get_linux_status');
+              snapshot.model = 'OEM controls UI fixture';
               snapshot.ac_online = true;
               snapshot.oem = {available:true, writable:true, error:null, mode:1, custom_power:false,
                 fan_boost:false, fan_rpm:[2500,2600], dc_jack:true,
@@ -344,6 +361,7 @@ class LinuxWindow(unittest.TestCase):
                 time.sleep(0.1)
             self.assertTrue(self.execute('return window.__oemReady;'))
             self.execute("document.querySelector('[aria-label=刷新]').click(); [...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === '电源管理').click(); return true;")
+            self.wait_for_status_fixture('OEM controls UI fixture')
             for _ in range(50):
                 if self.execute("return !!document.querySelector('.tuning-input-number:not(:disabled)');"): break
                 time.sleep(0.1)
@@ -406,6 +424,7 @@ class LinuxWindow(unittest.TestCase):
           localStorage.removeItem('openrevo_linux_fan_curve_v1');
           (async()=>{
             const snapshot=await window.__TAURI_INTERNALS__.invoke('get_linux_status');
+            snapshot.model='Fan curve UI fixture';
             snapshot.ac_online=false; snapshot.oem.available=true; snapshot.oem.writable=true;
             snapshot.oem.dc_jack=false; snapshot.oem.fan_boost=false;
             snapshot.oem.fan_curve={supported:true, active:false, fault:false, applied:null};
@@ -433,6 +452,7 @@ class LinuxWindow(unittest.TestCase):
                 time.sleep(0.1)
             self.assertTrue(self.execute('return window.__curveReady;'))
             self.execute("document.querySelector('[aria-label=刷新]').click(); [...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.trim()==='电源管理').click(); return true;")
+            self.wait_for_status_fixture('Fan curve UI fixture')
             for _ in range(100):
                 if self.execute("return !!document.querySelector('.shared-fan-editor');"): break
                 time.sleep(0.1)

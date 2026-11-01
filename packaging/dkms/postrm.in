@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    remove|purge|disappear)
+        # Also handle removal after an interrupted or failed configuration.
+        if command -v dkms >/dev/null 2>&1; then
+            status=$(dkms status -m openrevo-ec -v '@VERSION@')
+            if [ -n "$status" ]; then
+                dkms remove -m openrevo-ec -v '@VERSION@' --all
+            fi
+        else
+            printf '%s\n' 'DKMS is unavailable; module registration cleanup could not be checked.' >&2
+        fi
+        if [ -S /run/udev/control ]; then
+            udevadm control --reload-rules
+        fi
+        ;;
+esac
+exit 0

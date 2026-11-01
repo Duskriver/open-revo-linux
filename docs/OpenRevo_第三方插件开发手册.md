@@ -1,3 +1,5 @@
+> 历史参考：本文对应上游 Windows 实现。当前 Linux 分支不提供这里的插件或 models.json 接口；Linux 功能与开发入口请以仓库 README 和 docs/linux-port.md 为准。
+
 # OpenRevo 开发者圣经：全场景插件与扩展开发手册 (Plugin Developer Bible)
 
 > **版本**：`v1.0 Official Specification`  

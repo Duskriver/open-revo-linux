@@ -1,0 +1,10 @@
+vault_generated.h
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+Module.symvers
+modules.order
+test_fan_transaction
+test_control_transaction

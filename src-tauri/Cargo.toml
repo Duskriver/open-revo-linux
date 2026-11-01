@@ -1,28 +1,22 @@
 [package]
 name = "open-revo"
 version = "0.9.3"
-description = "Lightweight Custom Control Center for Mechrevo Laptops"
+description = "Linux control center for Mechrevo laptops"
 license = "GPL-3.0-or-later"
 edition = "2021"
 default-run = "open-revo"
-
-[features]
-windows-probes = []
+autobins = false
 
 [lib]
 name = "open_revo_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [workspace]
-members = [
-    ".",
-    "crates/openrevo-core",
-]
+members = [".", "crates/openrevo-core"]
+resolver = "2"
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
-serde_json = "1.0"
-
 
 [dependencies]
 openrevo-core = { path = "crates/openrevo-core" }
@@ -31,64 +25,10 @@ tauri-plugin-autostart = "2.0.0"
 tauri-plugin-single-instance = "2.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-[target.'cfg(windows)'.dependencies]
-libloading = "0.8"
-parking_lot = "0.12"
-tokio = { version = "1", features = ["time", "sync", "macros"] }
-semver = "1.0"
-ureq = { version = "2.10", default-features = false, features = ["json", "native-tls"] }
-sha2 = "0.10"
-rhai = { version = "1.19", features = ["sync", "no_module", "no_custom_syntax", "no_closure", "no_optimize"] }
-windows = { version = "0.58", features = [
-    "Win32_Graphics_Gdi",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_System_Power",
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_Com",
-    "Win32_System_Ole",
-    "Win32_System_Variant",
-    "Win32_System_Wmi",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_Registry",
-    "Win32_System_Threading",
-    "Win32_System_JobObjects",
-    "Win32_Media_Audio",
-    "Win32_Media_Audio_Endpoints",
-    "Devices_Bluetooth",
-    "Devices_Bluetooth_Advertisement",
-    "Devices_Bluetooth_GenericAttributeProfile",
-    "Devices_Radios",
-    "Devices_Enumeration",
-    "Storage_Streams",
-    "Foundation",
-    "Foundation_Collections",
-] }
 
 [[bin]]
 name = "open-revo"
 path = "src/main.rs"
-
-[[bin]]
-name = "ble_probe"
-path = "src/bin/ble_probe.rs"
-required-features = ["windows-probes"]
-
-[[bin]]
-name = "hardware_probe"
-path = "src/bin/hardware_probe.rs"
-required-features = ["windows-probes"]
-
-[[bin]]
-name = "lighting_probe"
-path = "src/bin/lighting_probe.rs"
-required-features = ["windows-probes"]
-
-[[bin]]
-name = "streamer_probe"
-path = "src/bin/streamer_probe.rs"
-required-features = ["windows-probes"]
 
 [profile.release]
 opt-level = "z"

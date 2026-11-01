@@ -1,4 +1,4 @@
-import { FanCurvePoint } from '../../types/hardware';
+import type { FanCurvePoint } from '../../types/controls';
 
 export const DEFAULT_8_POINT_CURVE: FanCurvePoint[] = [
   { temp: 40, duty: 22 },

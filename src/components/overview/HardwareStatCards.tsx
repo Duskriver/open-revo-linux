@@ -1,7 +1,5 @@
 import { Activity, Cpu, Fan, Sparkles } from 'lucide-react';
 import { ReactNode } from 'react';
-import { HardwareState } from '../../types/hardware';
-import { ModelCapabilities } from '../../plugins/plugin_manifest';
 
 export interface HardwareTelemetry {
   cpuName?: string | null;
@@ -38,22 +36,8 @@ function StatCard({ kind, title, icon, children, footer, usage }: {
   </div>;
 }
 
-/** Both platforms supply measurements; unavailable values never become demo readings. */
-export function HardwareStatCards({ status, capabilities, telemetry }: {
-  status?: HardwareState; capabilities?: ModelCapabilities; telemetry?: HardwareTelemetry;
-}) {
-  const t: HardwareTelemetry = telemetry ?? {
-    cpuName: status?.cpu_name, cpuTemp: status?.cpu_temp, cpuUsage: status?.cpu_usage,
-    cpuFrequency: status?.cpu_freq, cpuPower: status?.cpu_power_w,
-    gpuName: status?.gpu_name, gpuTemp: status?.gpu_temp, gpuUsage: status?.gpu_usage,
-    gpuFrequency: status?.gpu_core_freq, gpuPower: status?.gpu_power_w,
-    fanRpm: [status?.cpu_fan_rpm ?? null, status?.gpu_fan_rpm ?? null], fanBoost: status?.fan_boost,
-    fanState: status?.fan_boost ? '一键强冷' : '自动温控',
-    memoryLabel: capabilities?.discrete_gpu === false ? 'UMA 共享显存' : 'VRAM 显存容量',
-    memoryUsed: status?.gpu_vram_used_mb == null ? null : status.gpu_vram_used_mb / 1024,
-    memoryTotal: status?.gpu_vram_mb == null ? null : status.gpu_vram_mb / 1024,
-    memoryFrequency: status?.gpu_mem_freq,
-  };
+/** Render the supplied measurements; unavailable values never become demo readings. */
+export function HardwareStatCards({ telemetry: t }: { telemetry: HardwareTelemetry }) {
   const memoryUsage = t.memoryUsed != null && t.memoryTotal ? t.memoryUsed / t.memoryTotal * 100 : null;
   return <div className="telemetry-cards-grid" data-slot="telemetry-grid">
     <StatCard kind="cpu" title="CPU 处理器状态" icon={<Cpu size={16} />} usage={t.cpuUsage}

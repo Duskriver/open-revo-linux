@@ -1,179 +1,127 @@
 # OpenRevo for Linux
 
-> Community Linux port maintained by [Duskriver](https://github.com/Duskriver), based on [faintonce/open-revo](https://github.com/faintonce/open-revo). Upstream history, copyright notices and the GPL-3.0-or-later license are preserved. Linux port and fork release configuration updated on 2026-10-31.
->
-> Native Linux windows, system power profiles, monitoring and standard backlight interfaces are implemented. EC fan control, RGB and cooling hardware remain pending. **The upstream feature descriptions below primarily describe Windows. See [Linux capabilities, building and verification](docs/linux-port.md) for this port's actual scope.**
+[简体中文](README.md) | [English](README_en.md)
 
-Linux downloads: [v0.9.3-linux.1 preview](https://github.com/Duskriver/open-revo-linux/releases/tag/v0.9.3-linux.1), including the Debian package, corresponding source and SHA-256 checksums. Report Linux issues in [this fork](https://github.com/Duskriver/open-revo-linux/issues).
-
-<div align="center">
-
-[简体中文](README.md) | English
-
-</div>
-
-<div align="center">
-
-![OpenRevo Banner](./docs/logo_s.jpg)
+![OpenRevo](docs/logo_s.jpg)
 
 [![Linux CI](https://github.com/Duskriver/open-revo-linux/actions/workflows/linux.yml/badge.svg)](https://github.com/Duskriver/open-revo-linux/actions/workflows/linux.yml)
-[![License](https://img.shields.io/badge/License-GPL--3.0-10b981.svg?style=flat-square)](LICENSE)
-[![Framework](https://img.shields.io/badge/Framework-Tauri%20v2%20+%20Rust-f59e0b.svg?style=flat-square)](https://v2.tauri.app/)
-[![Frontend](https://img.shields.io/badge/Frontend-React%2018%20+%20TypeScript-38bdf8.svg?style=flat-square)](https://react.dev/)
-[![Free & Open Source](https://img.shields.io/badge/Open%20Source-100%25%20Free-rose.svg?style=flat-square)](#-strict-notice-free-and-open-source--resale-prohibited)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-**A modern, lightweight, microkernelized full-stack open-source control center for Mechrevo (MECHREVO / TongFang) gaming laptops**  
-Evolved from a lean replacement for bloated, laggy, memory-leaking official background services into an **extensible hardware microkernel platform** for the entire TongFang chassis ecosystem.  
-Portable single-binary (~2MB / ~15MB RAM), zero official dependencies, open hardware driver gateways, and native automation event hubs.
+A community Linux control center for MECHREVO laptops, maintained by [Duskriver](https://github.com/Duskriver) and derived from [faintonce/open-revo](https://github.com/faintonce/open-revo). It retains Rust, Tauri 2, React and the upstream hardware protocol work. Linux is the sole development, build and release target of this fork.
 
-</div>
+**This is a preview.** Standard controls depend on interfaces exposed by the Linux kernel. OEM EC controls are limited to an explicitly verified model and BIOS. Some tuning features are implemented and software-tested but still await powered, under-load hardware validation. Released packages may lag behind `main`; consult the notes for the version you install.
 
----
+[Linux downloads](https://github.com/Duskriver/open-revo-linux/releases) · [Capabilities and installation](docs/linux-port.md) · [Phased refactoring record](docs/linux-refactor.md) · [Issue tracker](https://github.com/Duskriver/open-revo-linux/issues)
 
-### 🛡️ Strict Notice: Free and Open Source · Resale Prohibited
+## Interface
 
-> **OpenRevo is a 100% free and permanently open-source community project. Anyone may download, use, and compile it free of charge at any time.**  
-> **Individuals and resellers are strictly prohibited from repackaging, rebranding, reselling, charging for, redistributing, or bundling this software on Xianyu, Taobao, Pinduoduo, Douyin, private groups, or any other platform.**  
-> **If you paid to obtain this software, you may have been defrauded by a malicious seller. Please request a refund through the transaction platform and report the infringing seller.**
+![OpenRevo Linux interface](docs/screenshots/linux-dashboard.png)
 
----
+The interface includes hardware status, performance modes, power and fan tuning, battery management, system settings, and Mono / Cyber themes. Features awaiting implementation are identified in the UI. Missing sensor measurements remain unknown.
 
-## 🖥️ Interface Preview
+## Current capabilities
 
-### Dashboard Overview
-<img src="docs/screenshots/dashboard.jpg" width="600" alt="Dashboard overview" />
+| Feature | Linux implementation and limits |
+| --- | --- |
+| CPU, memory, battery and power monitoring | Uses `/proc`, sysfs and power_supply; temperature, RPM and power readings depend on hwmon or the model-specific driver |
+| System and platform profiles | Integrates power-profiles-daemon / tuned-ppd and ACPI `platform_profile`, following system authorization and checking readback |
+| Standard fan and power controls | Offers full-speed requests or power limits on supported hwmon / powercap channels, subject to permissions and valid limits |
+| Display and monochrome keyboard brightness | Uses backlight / leds and systemd-logind, subject to kernel support and desktop session permissions |
+| Battery charge limit | Available when the kernel exposes `charge_control_end_threshold` and access is permitted; the verified machine currently lacks this interface |
+| OEM fan boost and restore | The new transaction driver passed a five-second boost and release-restoration test on GM5HG7A, including control-state and fault checks |
+| OEM office / balanced / turbo modes | The new transaction driver passed office and AC-powered balanced/turbo write/readback and mode-restoration tests; performance under load remains unverified |
+| OEM CPU limits and custom fan curves | A 35/35/70 W custom tuple and original-mode restoration passed; fan curves have software fault tests, while actual power and cooling under load remain unverified |
+| Desktop integration | Native window, single instance, login startup, tray menu, two themes and diagnostics export; tray availability depends on the desktop |
 
-### MiniDrawer (Quick Tray Drawer)
-<img src="docs/screenshots/miniDraw.jpg" width="200" alt="MiniDrawer" />
+Multicolor RGB effects, light bars, BLE water cooling, GPU MUX / overclocking, global shortcuts / OSD and the plugin runtime are not implemented. See the [Linux capability document](docs/linux-port.md) for detailed permissions and verification status.
 
-### Lighting Studio (BetterRGB High-FPS Engine)
-<img src="docs/screenshots/better%20RGB.jpg" width="600" alt="Lighting Studio" />
+System profiles and OEM chassis modes are separate control layers. Successful profile or register readback does not establish the resulting CPU power consumption, performance or cooling effectiveness.
 
-### Cooling & Power Tuning
-<img src="docs/screenshots/coolingSys.jpg" width="600" alt="Cooling System" />
+## Hardware support
 
----
+Standard monitoring and system controls discover interfaces provided by the Linux kernel and do not require the OEM module.
 
-## 💡 Why OpenRevo? (From Control Center to Microkernel Platform)
+The OEM EC module currently matches only this combination:
 
-* ⚡ **Ultra-Lightweight & Agile**: Powered by **Native Rust + Tauri v2 + Webview2**, single portable executable is only **~2MB**, idle memory footprint down to **~15MB**, completely eliminating bloated background services.
-* 🧠 **Universal Watcher & Trigger Hub (Microkernel Automation)**: Built-in native monitoring channels: hardware telemetry thresholds, foreground app/game detection, AC/DC & lid power edge streams, and controlled EC delta tracking. Supports **Declarative Manifest Rules** without writing frontend JavaScript.
-* 🛡️ **Raw Hardware Driver Gateway & Blast Shield**: Opens 4 low-level chassis driver protocols: `TongfangDirectEc`, `BldWmiMailbox`, `GenericAcpiWmi`, and `IteLightingBus`. Built-in **Hardware Blast Shield** asserts memory boundaries and blacklists critical registers for physical safety.
-* ⌨️ **Low-Level Global Keyboard Shortcut Bus (`WH_KEYBOARD_LL`)**: High-performance non-blocking key state tracking, modifier key debouncing, full-screen gaming passthrough, and native lightweight OSD overlay.
-* 🌈 **Dual Lighting Engines**: High-framerate **BetterRGB spatial streaming (15~60 FPS)** + **Factory hardware firmware (0% CPU)** with seamless handover upon power change or app exit.
-* 🧊 **Smart BLE Liquid Cooler Hub**: Native Bluetooth Low Energy communication with zero pairing hassle; custom fan/pump curves and safety alarms.
-* 🎛️ **Instant MiniDrawer**: Click tray icon to access performance profiles, fan boost, and display refresh rate within milliseconds.
-* 🤝 **Open Hardware Profiles (`config/ec_registry.json`)**: Fully decoupled hardware addresses. Community PRs for new motherboard models are warmly welcomed!
+| Property | Value |
+| --- | --- |
+| System vendor | `MECHREVO` |
+| Mainboard | `GM5HG7A` |
+| BIOS | `N.1.09MRO19` |
 
----
+Existing hardware records were collected on a Ryzen 7 8845H system running Ubuntu 26.04.1 with kernel `7.0.0-38-generic`. They do not establish support for other models, BIOS versions or kernels. Firmware updates require renewed verification. Unrecognized models continue to use discovered standard interfaces.
 
-## 🏗️ Architecture (Microkernel Architecture)
+Balanced / turbo mode, OEM CPU tuning and custom fan curve application require both the system's external-power state and the EC's barrel-adapter flag. These operations remain restricted on battery or USB-C-only power. Fan curves can be edited and saved as drafts without applying them; drafts are not applied automatically at startup.
 
+## Installation and use
+
+Download a Debian application package, corresponding source and checksums from this fork's [Releases](https://github.com/Duskriver/open-revo-linux/releases). Read the release notes and install using your distribution's package manager.
+
+Launch OpenRevo from your desktop application launcher as a regular user. It uses the system GTK / WebKitGTK libraries and does not require Wine. OEM features additionally require a matching `openrevo_ec` kernel module; a working application package does not imply that the module is installed or your hardware matches. See the [Linux installation document](docs/linux-port.md) for driver installation, permissions, kernel upgrades and Secure Boot.
+
+## Build from source
+
+Requires Rust stable, Node.js 22 and pnpm 9.15.9. Example Ubuntu / Debian build dependencies:
+
+```sh
+sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev librsvg2-dev patchelf
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                   Plugin Ecosystem & AI Agents & UI Layer              │
-│   - React 18 Modern Dark Console (Lucide Icons, Dual Themes)           │
-│   - MiniDrawer / Real-time OSD Overlay                                 │
-│   - Third-Party Sandboxed Plugins / Companion Services / Manifest Rules│
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ Standard Async IPC / Sandbox Bridge
-┌───────────────────────────────────▼────────────────────────────────────┐
-│                    OpenRevo Microkernel Hub                            │
-│  ┌───────────────────────────────┐   ┌───────────────────────────────┐ │
-│  │  Universal Watcher Hub        │   │  Global Shortcut Bus          │ │
-│  │  Telemetry / Apps / Power     │   │  WH_KEYBOARD_LL Passthrough   │ │
-│  └───────────────────────────────┘   └───────────────────────────────┘ │
-│  ┌───────────────────────────────────────────────────────────────────┐ │
-│  │         Raw Hardware Driver Gateway                               │ │
-│  │   TongfangDirectEc │ BldWmiMailbox │ GenericAcpiWmi │ IteBus      │ │
-│  └───────────────────────────────┬───────────────────────────────────┘ │
-│                                  │ Filtered by
-│  ┌───────────────────────────────▼───────────────────────────────────┐ │
-│  │             Hardware Blast Shield                                 │ │
-│  │   Boundary assertion (0x000..0x0FFF) + Critical register blacklist│ │
-│  └───────────────────────────────┬───────────────────────────────────┘ │
-└───────────────────────────────────┼────────────────────────────────────┘
-                                    │ Dispatched to
-┌───────────────────────────────────▼────────────────────────────────────┐
-│            Hardware Abstraction Layer (HAL & Profiles)                 │
-│  - Compile-time XOR Obfuscated Vault Core                              │
-│  - Open Hardware Registry: src-tauri/config/ec_registry.json           │
-│  - DriverHAL (Real Hardware) / MockHAL (Hardware-free Emulation)       │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🤝 Model Adaptation & Community PR Guide
-
-OpenRevo aims to be the universal hardware foundation for all Mechrevo & TongFang laptops.  
-All EC register offsets are defined in [`src-tauri/config/ec_registry.json`](src-tauri/config/ec_registry.json).
-
-If you have an unadapted model (Jiaolong, Kuangshi, Yaoshi, Jiguang, Wujie, Yilong, etc.):
-1. Refer to the standardized schema in `src-tauri/config/ec_registry.json`;
-2. Dump/test your model's EC offsets (PL limits, fan RPM, battery thresholds, RGB);
-3. **Submit a Pull Request!** Let's power up all Mechrevo models together!
-
----
-
-## 🚀 Quick Start
-
-### Linux
-
-Install the [Linux prerequisites](docs/linux-port.md), then run:
 
 ```sh
 git clone https://github.com/Duskriver/open-revo-linux.git
 cd open-revo-linux
 pnpm install --frozen-lockfile
 pnpm linux:dev
-# Build a Debian package
+```
+
+Build the Debian application package:
+
+```sh
 pnpm linux:build
 ```
 
-Use [Linux Releases](https://github.com/Duskriver/open-revo-linux/releases) for preview packages. Run the GUI as your regular desktop user. The following Windows instructions refer to upstream releases.
+The executable and package are written to `src-tauri/target/release/open-revo` and `src-tauri/target/release/bundle/deb/`. They depend on system libraries; compatibility must be checked on the target distribution.
 
-### 📥 Option 1: Direct Download (Recommended)
-Download the standalone executable from the [Releases Page](https://github.com/faintonce/open-revo/releases):
-1. Download `OpenRevo.exe` (~2MB);
-2. Run as Administrator;
-3. Taking over the official control center is recommended to prevent conflicts.
+## Diagnostics and verification
 
----
+The default headless diagnostic command reads status without applying settings:
 
-### 💻 Option 2: Build from Source
-
-#### Prerequisites
-- **Node.js** >= 18
-- **pnpm** >= 9
-- **Rust Toolchain** (stable-x86_64-pc-windows-msvc)
-- **Visual Studio C++ Build Tools** (with Windows SDK)
-
-```bash
-# 1. Clone repository
-git clone https://github.com/faintonce/open-revo.git
-cd open-revo
-
-# 2. Install dependencies
-pnpm install
-
-# 3. Start development
-pnpm tauri dev
-
-# 4. Build release bundle
-pnpm tauri build
+```sh
+cargo run --manifest-path src-tauri/Cargo.toml -p openrevo-core --bin openrevo-probe
 ```
 
----
+The UI can also export diagnostics as JSON, including the model, board, BIOS, kernel, capabilities and sensor state. Serial numbers are not collected. For bug reports, include the application version, distribution, kernel, BIOS, reproduction steps and relevant diagnostics.
 
-## 📜 License
+Basic development checks:
 
-This project is licensed under the **[GNU General Public License v3.0 (GPLv3)](LICENSE)**.
-You are free to run, inspect, and modify the code. Any modified versions or derivative works distributed must remain 100% free and open-source under GPLv3. Commercial repackaging, closed-source reselling, and proprietary relicensing are strictly prohibited.
+```sh
+python3 scripts/check_vault_leaks.py
+pnpm linux:check
+pnpm build
+```
 
-<div align="center">
+Core tests use temporary system interfaces and an in-memory EC. Native window tests exercise real Tauri IPC, navigation, themes and control UI fixtures. Native regression tests do not write to real hardware by default; hardware-write checks must be explicitly enabled. Procedures and stage-specific results are recorded in the [capability and verification document](docs/linux-port.md) and [refactoring record](docs/linux-refactor.md).
 
-**OpenRevo is committed to delivering pure, responsive, and powerful hardware control!**  
-If this project helped you, please give it a ⭐ **Star** on GitHub!
+## Development structure
 
-</div>
+| Location | Responsibility |
+| --- | --- |
+| `src/` | Linux React UI, typed IPC and state polling |
+| `src-tauri/src/` | Tauri window, tray and command host |
+| `src-tauri/crates/openrevo-core/` | Linux system interfaces, hardware rules, telemetry and control core |
+| `src-tauri/config/ec_registry.json` | Central register, bitmask and protocol dictionary |
+| `drivers/openrevo-ec/` | Model-specific WMI / EC kernel module |
+| `tests/` | Hardware boundary checks and native window regression |
+
+Development follows [AGENTS.md](AGENTS.md), proceeds in phases on `main`, and uses tags for releases. Refactoring preserves existing Linux features and hardware-policy semantics. Hardware changes require software tests and the relevant hardware validation. For Windows software and instructions, visit the [original upstream project](https://github.com/faintonce/open-revo).
+
+## Attribution, license and support
+
+Upstream history and copyright notices are preserved. This project is distributed under **GPL-3.0-or-later**; see [LICENSE](LICENSE). This README adds no further licensing restrictions.
+
+The OpenRevo name, [banner](docs/logo_s.jpg), [icon](src/assets/logo.png) and existing UI assets originate from upstream. The in-app support page and donation images come from the [upstream support-page source](https://github.com/faintonce/open-revo/blob/main/src/components/SponsorView.tsx) and [upstream donation assets](https://github.com/faintonce/open-revo/tree/main/src/assets/sponsor); they display the upstream author's channels. Please direct Linux-port feedback and contributions to [this fork](https://github.com/Duskriver/open-revo-linux).
+
+Thanks to [faintonce/open-revo](https://github.com/faintonce/open-revo) for the original implementation, [BetterRGB](https://github.com/ZavierChen/BetterRGB-ITE8291-Adaptive) for related exploration, and the [TUXEDO driver project](https://github.com/tuxedocomputers/tuxedo-drivers) for Linux protocol references.
+
+This is an independent community project, not official MECHREVO or TongFang software.
