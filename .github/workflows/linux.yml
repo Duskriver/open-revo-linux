@@ -15,9 +15,23 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Read Python regression version
+        id: python
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          version = json.loads(Path('tests/toolchain.json').read_text())['python']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          PY
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ steps.python.outputs.version }}
+      - name: Read declared development tools
+        id: toolchain
+        run: python3 tools/check_toolchain.py --github-output "$GITHUB_OUTPUT"
       - name: Verify hardware vault boundary
         run: python3 scripts/check_vault_leaks.py
       - name: Test hardware vault gate
@@ -25,11 +39,12 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, pinned 2026-11-01
         with:
-          components: clippy
+          toolchain: ${{ steps.toolchain.outputs.rust }}
+          components: ${{ steps.toolchain.outputs.rust_components }}
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
@@ -40,11 +55,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm linux:check
       - run: make -C drivers/openrevo-ec test
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml -p openrevo-core --all-targets -- -D warnings
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml -p openrevo-core --all-targets --locked -- -D warnings
       - name: Build native test application
-        run: pnpm tauri build --debug --no-bundle
+        run: pnpm tauri build --debug --no-bundle -- --locked
       - name: Install Tauri WebDriver
-        run: cargo install tauri-driver --locked
+        env:
+          TAURI_DRIVER_VERSION: ${{ steps.toolchain.outputs.tauri_driver }}
+        run: cargo install tauri-driver --version "$TAURI_DRIVER_VERSION" --locked
+      - name: Verify and record development tools
+        run: |
+          mkdir -p test-results
+          python3 tools/check_toolchain.py --check --with-driver > test-results/toolchain.json
+          dpkg-query -W libwebkit2gtk-4.1-0 webkit2gtk-driver > test-results/webkit-packages.txt
       - name: Test native window
         run: dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
       - name: Build complete Debian package
@@ -68,6 +90,14 @@ jobs:
           name: openrevo-linux-x86_64
           if-no-files-found: error
           path: ${{ steps.package.outputs.path }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openrevo-toolchain-metadata
+          if-no-files-found: ignore
+          path: |
+            test-results/toolchain.json
+            test-results/webkit-packages.txt
 
   kernel:
     name: Kernel module (${{ matrix.os }})
@@ -82,6 +112,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential linux-headers-generic
+      - name: Test generator with target distribution Python
+        # Installed DKMS sources use the target distribution's system Python.
+        run: |
+          /usr/bin/python3 --version
+          /usr/bin/python3 drivers/openrevo-ec/test_generate_header.py
       - name: Build module without loading hardware
         run: |
           headers=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' | sort -V | tail -n 1)

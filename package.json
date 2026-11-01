@@ -10,27 +10,32 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --no-bundle",
+    "tauri:build": "tauri build --no-bundle -- --locked",
     "linux:dev": "tauri dev",
-    "linux:build": "tauri build --bundles deb && python3 packaging/build_linux_package.py",
+    "linux:build": "pnpm check:toolchain && tauri build --bundles deb -- --locked && python3 packaging/build_linux_package.py",
     "linux:check": "pnpm check",
-    "check": "python3 scripts/check_vault_leaks.py && python3 -m unittest discover -s tests -p 'test_*.py' && cargo test --manifest-path src-tauri/Cargo.toml -p openrevo-core && tsc --noEmit",
-    "linux:driver:build": "python3 packaging/build_driver_package.py"
+    "check": "pnpm check:toolchain && python3 scripts/check_vault_leaks.py && python3 -m unittest discover -s tests -p 'test_*.py' && cargo test --manifest-path src-tauri/Cargo.toml -p openrevo-core --locked && tsc --noEmit",
+    "linux:driver:build": "python3 packaging/build_driver_package.py",
+    "check:toolchain": "python3 tools/check_toolchain.py --check"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
-    "lucide-react": "^0.460.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "@tauri-apps/api": "2.12.4",
+    "lucide-react": "1.66.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
-    "@types/node": "^22.9.0",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.3",
-    "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "@tauri-apps/cli": "2.12.4",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
   },
-  "packageManager": "pnpm@9.15.9"
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": "24.22.0",
+    "pnpm": "12.16.1"
+  }
 }

@@ -65,10 +65,12 @@ sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
   libayatana-appindicator3-dev librsvg2-dev patchelf
 ```
 
-另需 Rust stable、Node.js 22 和 pnpm 9.15.9：
+开发与回归工具固定为 Rust 1.99.1、Node.js 24.22.0、pnpm 12.16.1、Python 3.14.4；窗口测试使用 tauri-driver 2.1.0。版本来源、安装和更新流程见 [开发工具链](development-toolchain.md)，功能实现及真实验证等级见 [功能台账](linux-feature-ledger.md)。安装包使用发行版提供的系统 Python，开发版本要求不影响终端用户安装。
 
 ```sh
+corepack enable pnpm
 pnpm install --frozen-lockfile
+pnpm check:toolchain
 pnpm linux:dev
 pnpm linux:build
 ```

@@ -16,13 +16,13 @@ members = [".", "crates/openrevo-core"]
 resolver = "2"
 
 [build-dependencies]
-tauri-build = { version = "2.0.0", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 openrevo-core = { path = "crates/openrevo-core" }
-tauri = { version = "2.0.0", features = ["tray-icon"] }
-tauri-plugin-autostart = "2.0.0"
-tauri-plugin-single-instance = "2.0.0"
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-single-instance = "2.5.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

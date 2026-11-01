@@ -40,7 +40,8 @@ class LinuxWindow(unittest.TestCase):
     def setUpClass(cls):
         driver = shutil.which("tauri-driver")
         if not driver:
-            raise RuntimeError("Install tauri-driver with cargo install tauri-driver --locked")
+            version = json.loads((ROOT / "tests/toolchain.json").read_text())["tauri-driver"]
+            raise RuntimeError(f"Install tauri-driver with cargo install tauri-driver --version {version} --locked")
         binary = Path(os.environ.get("OPENREVO_TEST_BINARY", ROOT / "src-tauri/target/debug/open-revo")).resolve()
         if not binary.is_file():
             raise RuntimeError("Build the GUI first: pnpm tauri build --debug --no-bundle")

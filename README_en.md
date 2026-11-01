@@ -71,7 +71,7 @@ Launch OpenRevo from your desktop application launcher as a regular user. It use
 
 ## Build from source
 
-Requires Rust stable, Node.js 22 and pnpm 9.15.9. Example Ubuntu / Debian build dependencies:
+The development baseline pins Node.js `24.22.0`, Rust/Cargo `1.99.1`, pnpm `12.16.1` and Python `3.14.4`. Select Node with your version manager using `.node-version`; Rust uses `rust-toolchain.toml`. See [development toolchain and bootstrap](docs/development-toolchain.md) for setup, native-window test tools and the update process. The installed Debian package continues to use the distribution's system Python. Example Ubuntu / Debian build dependencies:
 
 ```sh
 sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
@@ -81,7 +81,9 @@ sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
 ```sh
 git clone https://github.com/Duskriver/open-revo-linux.git
 cd open-revo-linux
+corepack enable pnpm
 pnpm install --frozen-lockfile
+pnpm check:toolchain
 pnpm linux:dev
 ```
 

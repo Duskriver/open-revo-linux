@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { execSync } from 'child_process';
-import app from './src-tauri/tauri.conf.json';
+import app from './src-tauri/tauri.conf.json' with { type: 'json' };
 
 const getGitCommitHash = (): string => {
   try {
@@ -32,7 +32,7 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     target: 'safari13',
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    minify: !process.env.TAURI_DEBUG ? 'oxc' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
   },
 });

@@ -1,6 +1,6 @@
 packages:
   - '.'
-allowBuilds:
-  esbuild: true
-onlyBuiltDependencies:
-  - esbuild
+nodeLinker: hoisted
+shamefullyHoist: true
+engineStrict: true
+allowBuilds: {}

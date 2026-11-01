@@ -22,7 +22,7 @@ export function DashboardChrome({ theme, onToggleTheme, versionLabel, tabs, acti
   const [left, setLeft] = useState(false);
   const [right, setRight] = useState(false);
   const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const checkScroll = () => {
     const el = nav.current;
     if (el) { setLeft(el.scrollLeft > 2); setRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2); }

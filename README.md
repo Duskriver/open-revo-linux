@@ -13,7 +13,7 @@
 
 `0.9.3-linux.2` 使用一个同时包含 GUI 与 DKMS 驱动源码的完整 `.deb`。已在维护者本机完成安装、窗口及短时强冷恢复验证，详见 [版本说明](docs/linux-release-notes.md)。
 
-[下载 Linux 预览版](https://github.com/Duskriver/open-revo-linux/releases) · [功能与安装说明](docs/linux-port.md) · [分阶段重构记录](docs/linux-refactor.md) · [问题反馈](https://github.com/Duskriver/open-revo-linux/issues)
+[下载 Linux 预览版](https://github.com/Duskriver/open-revo-linux/releases) · [功能与安装说明](docs/linux-port.md) · [功能与验证台账](docs/linux-feature-ledger.md) · [项目发展计划](docs/linux-roadmap.md) · [分阶段重构记录](docs/linux-refactor.md) · [问题反馈](https://github.com/Duskriver/open-revo-linux/issues)
 
 ## 界面
 
@@ -71,7 +71,7 @@ APT 会安装 GUI 运行库、DKMS 和编译工具，并自动替换旧的拆分
 
 ## 从源码构建
 
-需要 Rust stable、Node.js 22 和 pnpm 9.15.9。Ubuntu / Debian 构建依赖示例：
+开发工具链固定为 Rust 1.99.1、Node.js 24.22.0、pnpm 12.16.1 和 Python 3.14.4，版本配置与 CI 共用。安装、切换及更新方法见 [开发工具链](docs/development-toolchain.md)。Ubuntu / Debian 构建依赖示例：
 
 ```sh
 sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
@@ -81,7 +81,9 @@ sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
 ```sh
 git clone https://github.com/Duskriver/open-revo-linux.git
 cd open-revo-linux
+corepack enable pnpm
 pnpm install --frozen-lockfile
+pnpm check:toolchain
 pnpm linux:dev
 ```
 
