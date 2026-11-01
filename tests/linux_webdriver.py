@@ -48,6 +48,11 @@ class LinuxWindow(unittest.TestCase):
         if not binary.is_file():
             raise RuntimeError("Build the GUI first: pnpm tauri build --debug --no-bundle")
         environment = os.environ.copy()
+        if environment.get('OPENREVO_TEST_SCREENSHOT_BACKEND') == 'x11':
+            # Keep the app on the same Xvfb display as the capture process,
+            # even when this test is launched from a Wayland desktop.
+            environment.pop('WAYLAND_DISPLAY', None)
+            environment['GDK_BACKEND'] = 'x11'
         # Keep both native settings and WebKit localStorage away from the user's
         # application data. Retain every run's directory for failure inspection.
         output_root = ROOT / "test-results"
@@ -121,6 +126,12 @@ class LinuxWindow(unittest.TestCase):
         self.execute("[...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === arguments[0]).click(); return true;", [name])
 
     def screenshot(self):
+        backend = os.environ.get('OPENREVO_TEST_SCREENSHOT_BACKEND', 'webdriver')
+        if backend == 'x11':
+            from x11_screenshot import capture
+            return capture(request('GET', f'/session/{self.session}/window/rect'))
+        if backend != 'webdriver':
+            raise RuntimeError(f'Unknown screenshot backend: {backend}')
         # WebKitWebDriver can time out a capture during a compositor update.
         # Retry only this read-only request; never repeat an IPC mutation.
         for attempt in range(2):

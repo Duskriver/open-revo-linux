@@ -68,6 +68,8 @@ jobs:
           python3 tools/check_toolchain.py --check --with-driver > test-results/toolchain.json
           dpkg-query -W libwebkit2gtk-4.1-0 webkit2gtk-driver > test-results/webkit-packages.txt
       - name: Test native window
+        env:
+          OPENREVO_TEST_SCREENSHOT_BACKEND: x11
         run: dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
       - name: Build complete Debian package
         run: pnpm linux:build
