@@ -1,8 +1,24 @@
 # Linux 功能与验证台账
 
-更新日期：2026-11-01（Asia/Shanghai）。本台账对应 [项目发展计划](linux-roadmap.md) 的 16 类功能，记录当前交付状态，不是未实现功能的支持承诺。
+更新日期：2026-11-02（Asia/Shanghai）。本台账对应 [项目发展计划](linux-roadmap.md) 的 16 类功能，记录当前交付状态，不是未实现功能的支持承诺。
 
 初始代码基线：`e29c22402cab20bf701b9c87ce00bd67a02a524e`，应用版本 `0.9.3-linux.2`。上游功能参照沿用发展计划已核对的 `faintonce/open-revo/main` 提交 `b7d2b526e60cd04965eadab21e606bdb1e1aa56e`；该初始基线未计入上游 `dev`；后续已审查 `dev@4a9bee1` 并吸收部分基础设计，未继承其新增硬件支持声明。后续修改应更新相关条目及证据，不因整体构建通过而自动提高硬件验证等级。
+
+### 当前主干增量：Phase 1 驱动迁移
+
+本批按 [架构蓝图](../linux_architecture_plan.md) 实施。以下旧版实机证据继续保留原版本边界；不能据此把新驱动标记为实机通过。
+
+- ORL-F002/F003：模式与 CPU 事务迁入 Rust，传输改为注册字典白名单；内核保留曲线与强冷恢复。`transport_abi=1` / 风扇 v2，与旧驱动互不开放写入。
+- 驱动匹配改为 MECHREVO + Uniwill WMI，`force` 只绕过厂商检查，默认关闭；不再有主板/BIOS 白名单。新型号仍无验证结论。
+- ORL-F011：Phase 1 原始事件与丢失诊断已完成；Phase 2 补入显式模式键联动及桌面通知，系统驱动已绑定 GUID 时不抢占。
+- 水冷只读取 EC 能力位，读失败保持未知；没有 BlueZ 控制。ITE HID、限充和 powercap 赋权待对应功能阶段实施。
+- 软件结果与后续项以蓝图末尾本批记录为准；新驱动的硬件读回及生命周期等级均未验证。
+
+### Phase 2 当前增量
+
+- ORL-F004：新增 EC 电池三档与双阈值，能力位/原策略/设备 ABI 门禁和失败恢复已实现；实际充放电等级仍未验证，不沿用旧版硬件结果。
+- ORL-F011/F013/F014 相关设备与按键：新增 EC 快捷开关、显式开启的四档模式键循环、模式指示灯共享位保护、通知与状态事件。触摸板仅是 EC 标记；MiniLED、其他 Fn 动作未实现。
+- 软件：100 项核心、1 项 CLI、36 项 Python、17 项原生窗口及模块编译通过。详情和边界见 [蓝图第三批记录](../linux_architecture_plan.md#第三批phase-2-电池开关与模式键联动2026-11-02)。本批没有实机控制结果或通知外观结论。
 
 ## 记录规则
 
@@ -48,20 +64,20 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 | 稳定 ID | 功能 | 实现与当前可用性 | 软件验证 | 真实验证与范围 | 下一步 |
 | --- | --- | --- | --- | --- | --- |
 | ORL-F001 | CPU、内存、温度、风扇、电池监测 | 接口已实现；标准传感器及部分顶层读数附来源/采样状态，静态身份缓存，界面标记过期数据 | 软件通过：E-S01、E-S02、E-S05 | R1，HW-01；不代表每个传感器均存在或已校准。E-H01、E-H02 | 补齐电池/背光/OEM字段元数据、短时历史与资源测量 |
-| ORL-F002 | 系统档位与 OEM 性能模式 | 接口已实现；系统服务/平台档位与 OEM 模式是独立控制层 | 软件通过：E-S01～E-S03 | OEM R2/L1，HW-01；系统档位仅有旧版 R2/L1，当前包真实写回跳过。E-H01～E-H03 | 保守带载与生命周期验证；组合场景说明 |
-| ORL-F003 | CPU 功耗、自定义曲线与强冷 | 接口已实现；OEM 功耗/强冷已有实测，曲线仍限软件验证 | 软件通过：E-S01～E-S03 | CPU 功耗、OEM 强冷 R2/L1；自定义曲线 R0/L0；均无 R3。HW-01，E-H01、E-H02 | 曲线实测、功耗效果、异常与生命周期；再加命名预设 |
-| ORL-F004 | 电池养护与限充 | 标准接口已实现，HW-01 未公开限充接口；OEM 限充未实现 | 软件通过：E-S01 | 限充 R0/L0；HW-01 当前不可用，STD 有条件可用。E-H01、E-C01 | 查明主机型协议与读回方式后决定 OEM 适配 |
+| ORL-F002 | 系统档位与 OEM 性能模式 | 统一四档语义入口，后端选择 EC 或标准系统策略 | 软件通过：E-S01～E-S03 | OEM R2/L1，HW-01；系统档位仅有旧版 R2/L1，当前包真实写回跳过。E-H01～E-H03 | 保守带载与后台生命周期验证 |
+| ORL-F003 | CPU 功耗、自定义曲线与强冷 | 接口已实现；OEM 功耗/强冷已有实测，曲线仍限软件验证 | 软件通过：E-S01～E-S03 | CPU 功耗、OEM 强冷 R2/L1；自定义曲线 R0/L0；均无 R3。HW-01，E-H01、E-H02 | 曲线实测、功耗效果、异常与生命周期；命名预设已有软件验证 |
+| ORL-F004 | 电池养护与限充 | EC 三档/双阈值与标准接口已实现，EC 依赖能力位和设备 ABI | 软件通过：E-S07、E-S01 | EC/标准限充 R0/L0；新 EC 通道未实测 | 实际限充、固件保持与恢复验证 |
 | ORL-F005 | 屏幕与单色键盘亮度 | 标准接口已实现；按设备与 logind 会话权限提供 | 软件通过：目标发现/边界，E-S01 | 屏幕亮度仅有旧版 API 层 R2/L1；该次 GUI 操作未改变硬件；键盘亮度 R0。E-H03 | 当前版 GUI 端到端、权限变化与热插拔验证 |
-| ORL-F006 | RGB 键盘、灯带与灯区 | 未实现；RGB 页面仅占位，单色背光归 ORL-F005 | 未验证 | R0/L0；没有已验证的 Linux RGB 设备组合 | 确认设备标识与协议，交付基础颜色/固件灯效 |
+| ORL-F006 | RGB 键盘、灯带与灯区 | 未实现专用控制，已移除占位卡片；单色背光归 ORL-F005 | 未验证 | R0/L0 | 确认同方 EC / ITE 设备标识与协议 |
 | ORL-F007 | GPU 状态与能耗 | 部分实现：通用 hwmon 温度/功率读取；无完整 GPU 识别与遥测模块 | 软件通过：通用 hwmon 与休眠设备跳过，E-S01 | 专项 GPU 遥测、独显不唤醒和能耗效果 R0；STD 按接口发现 | GPU 识别、按需订阅与休眠/功耗基线 |
 | ORL-F008 | GPU Dynamic Boost、TGP 与超频 | 未实现专用能力；通用功耗上限不等于这些控制 | 未验证 | R0/L0；无已验证设备/驱动范围 | 分别调查 OEM 与 GPU 驱动接口、限值和恢复 |
 | ORL-F009 | GPU MUX 与显卡拓扑 | 未实现；没有物理 MUX 或应用渲染选择流程 | 未验证 | R0/L0；无已验证设备/驱动范围 | 分开设计 offload 与 MUX，验证重启和外屏 |
 | ORL-F010 | BLE 水冷 | 未实现；无 BlueZ 设备发现、连接与控制后端 | 未验证 | R0/L0；需要测试设备 | 设备识别、连接、遥测、保守控制和断线处置 |
-| ORL-F011 | 全局快捷键、OSD、机身按键 | 未实现对应 Linux 功能；轮询模式状态不等于按键事件接入 | 未验证 | R0；桌面/按键范围未建立 | 快捷键与通知先行，建立桌面支持矩阵 |
-| ORL-F012 | 托盘快捷控制与刷新率 | 部分实现：托盘打开/退出；无快捷控制抽屉及刷新率设置 | 原生窗口软件通过，E-S02；托盘菜单专项未验证 | 窗口/桌面启动 R1，HW-01/UI-01；托盘交互、刷新率 R0。E-H02 | 同一命令 API 的常用操作及桌面适配 |
-| ORL-F013 | 摄像头、触控板、Win 键等开关 | 未实现专用控制 | 未验证 | R0/L0；无已验证设备/桌面范围 | 区分桌面软件设置与真实硬件开关，逐项适配 |
-| ORL-F014 | MiniLED、通电开机等固件功能 | 未实现 | 未验证 | R0/L0；无已验证屏幕/固件范围 | 设备清单、协议证据、读回与恢复方案 |
-| ORL-F015 | 自动化规则与场景切换 | 未实现；登录自启不等于自动场景，风扇保护不等于通用规则引擎 | 未验证 | R0/L0；未建立后台策略生命周期 | 配置 schema、控制所有权与事件契约后实现受限规则 |
+| ORL-F011 | 全局快捷键、OSD、机身按键 | 显式模式键联动与原生通知已实现；其他 Fn/全局快捷键待实现 | 软件通过：E-S07 | 实际事件/通知外观 R0 | 建立实际事件码和桌面验证矩阵 |
+| ORL-F012 | 托盘快捷控制与刷新率 | 托盘提供四档、强冷与电池三档；刷新率未实现 | 窗口软件通过：E-S07；托盘点击专项未验证 | 旧窗口记录 E-H02；新菜单实机 R0 | 桌面托盘组合与点击专项验证 |
+| ORL-F013 | 摄像头、触控板、Win 键等开关 | EC Fn/Win 锁、摄像头、USB 与触摸板标记已实现；触摸板输入控制未实现 | 软件通过：E-S07 | 新开关物理效果 R0/L0 | 按项核对设备效果和失败恢复 |
+| ORL-F014 | MiniLED、通电开机等固件功能 | EC 来电自启已实现；MiniLED 专用通道待实现 | 软件通过：E-S07（来电自启） | R0/L0 | 同方 MiniLED 通道与真实来电行为验证 |
+| ORL-F015 | 自动化规则与场景切换 | 命名场景已撤下；四档模式、语义 CLI 和后台续租已实现 | 软件通过：E-S06 | 新场景组合 R0/L0；底层单项实测等级不变 | 按新架构蓝图推进物理按键和硬件能力 |
 | ORL-F016 | 用户插件与机型配置 | 未实现 Linux 插件宿主及用户机型配置；仅有历史文档与内部硬件白名单 | 未验证 | R0；无 Linux 插件兼容承诺 | 数据配置/SDK 先行，再建设隔离代码扩展 |
 
 ## 能力边界与逐项证据
@@ -70,7 +86,7 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 
 - 实现/权限：E-C01 使用 procfs、sysfs、hwmon、power_supply；E-C03 补充 OEM 双风扇读数。读取以普通用户实际可见接口为准，未知/故障值不回退模拟数据。GPU 专项边界见 ORL-F007。
 - 软件：E-S01 覆盖单位换算、坏值、缺失数据、CPU 差分、电池健康度等；E-S02 验证真实快照可到达原生窗口。真实 R1 来源为 E-H01/E-H02 的状态及风扇记录，不声称所有显示值均经外部仪器验证。
-- 后续实现（E-S05）：标准 hwmon 和 CPU/内存/供电/静态身份增加来源、有效采样时间及 ok/unavailable/fault/warming_up；静态身份成功缓存，缺失每 30 秒重试。界面按单调时钟判断十秒未更新为过期，暂停新调节并停止续租，恢复操作保留。
+- 后续实现（E-S05）：标准 hwmon 和 CPU/内存/供电/静态身份增加来源、有效采样时间及 ok/unavailable/fault/warming_up；静态身份成功缓存，缺失每 30 秒重试。界面按单调时钟判断十秒未更新为过期，暂停新调节，恢复操作保留；2026-11-02 起后台独立续租。
 - 下一步：补齐电池、背光、OEM 子字段元数据与历史缓存，实测进程开销；历史缓存不能隐式增加独显轮询。
 
 ### ORL-F002：系统档位与 OEM 模式
@@ -88,9 +104,9 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 
 ### ORL-F004：电池养护与限充
 
-- 实现/权限：E-C01 仅在电池已发现、公开 `charge_control_end_threshold` 且可写时设置；验证取值与起始阈值关系并读回。HW-01 当前未公开该接口（E-H01），因此是“接口已实现但本机不可用”，不能标为主机型已支持限充。
-- 软件：E-S01 覆盖边界、未知电池、起始阈值和不凭空创建接口；无真实限充写入证据。电池状态/健康度展示归 ORL-F001。
-- 下一步：核实主机型 OEM 协议、真实充电行为及恢复条件；需要新协议时通过硬件字典与语义操作实现，不开放裸寄存器入口。
+- 实现/权限：标准接口依赖已发现的可写阈值文件；EC 依赖电池能力位、有效原策略和 `device_controls_abi=1`。三档/双阈值语义动作与共享位恢复见 E-C11。
+- 软件：E-S01 保留标准接口测试；E-S07 覆盖 EC 顺序/共享位、故障恢复和界面输入。没有真实限充写入或充放电效果证据。
+- 下一步：核实目标固件的能力声明、策略保持及实际充电行为，不使用平台身份伪装绕过能力边界。
 
 ### ORL-F005：屏幕与单色键盘亮度
 
@@ -126,35 +142,37 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 
 ### ORL-F011：全局快捷键、OSD、机身按键
 
-- 证据/边界：E-C07 仅有窗口、托盘、自启和硬件 IPC；尚无 Linux 快捷键注册、OSD、机身事件订阅。现有模式轮询只显示状态，不能证明消费了按键事件。
-- 下一步：先按桌面实际能力提供快捷键及通知；按 GNOME/KDE、Wayland/X11 分开记录注册授权、冲突、注销与快捷操作结果。机身按键单独关联硬件事件和模式读回。
+- 当前实现：模式键默认关闭，显式启用后使用共享四档动作；未知事件、丢帧批次、停顿后的旧事件和写模式回声不执行。通知通过独立线程发送。
+- 软件：E-S07 以管道模拟 WMI 帧，验证四档循环、保存、去抖、回声/丢帧过滤与禁用。没有真实按键或通知服务外观验证；未注册 Linux 全局快捷键。
+- 下一步：按 GNOME/KDE、Wayland/X11 记录实际事件、权限与通知；其他 Fn 动作分别实现。
 
 ### ORL-F012：托盘快捷控制与刷新率
 
-- 实现/权限：E-C07 的托盘仅提供“打开 OpenRevo”和“退出”，托盘不可用时不阻止 GUI；没有快捷硬件菜单、迷你抽屉或刷新率接口。
+- 实现/权限：E-C07 的托盘提供四档、强冷、电池三档和打开/退出，创建失败时不阻止 GUI；没有迷你抽屉或刷新率接口。
 - 验证：E-S02/E-H02 证明原生窗口与桌面启动，未覆盖托盘点击专项或 GNOME/KDE 托盘扩展组合；因此不将整个功能记为 R2。刷新率功能未实现，无权限或显示设备支持承诺。
-- 下一步：复用同一语义 API 添加常用控制，明确窗口关闭与后台策略行为；刷新率按桌面显示接口另行调查和验证。
+- 下一步：验证新菜单的点击、关闭隐藏和通知行为；刷新率按桌面显示接口另行调查和验证。
 
 ### ORL-F013：摄像头、触控板、Win 键等开关
 
-- 证据/边界：E-C07 无这些独立动作；OEM 模式事务保存/恢复某些相关固件状态，不等于已经提供用户开关。没有独立的 Linux 权限、设备发现或实测记录。
-- 下一步：逐项区分桌面设置、输入事件过滤、固件开关与硬件断电，选择能读回并解释真实效果的接口；不得将软件禁用标成硬件关闭。
+- 当前实现：E-C11 提供独立语义动作与实时状态；普通开关保留共享位并支持恢复，Win 锁只发单次脉冲并确认实际状态。没有真实设备效果验证。
+- 边界：摄像头项仅操作 EC 供电位，不修改桌面隐私策略；触摸板项仅同步 EC 标记，不保证 Linux 输入关闭。模式指示灯与开关位互相保留。
+- 下一步：逐项记录 EC 读回与物理效果，触摸板输入需要适配桌面合成器。
 
 ### ORL-F014：MiniLED、通电开机等固件功能
 
-- 证据/边界：E-C07 无这些独立命令，未建立受支持屏幕、BIOS 或固件功能清单；历史 Windows 资料只作为调查线索。
-- 下一步：按子功能追加稳定子 ID、设备匹配和协议证据；明确立即生效/重启生效、恢复方法以及用户可观察的结果后再开放写入。
+- 当前实现：来电自启使用 EC 掩码动作与读回；软件见 E-S07，实际来电行为仍未验证。
+- MiniLED：上游已知命令依赖木珑 WMI；本项目当前同方通道不据此开放该开关。需找到适用协议与设备证据后实现。
 
-### ORL-F015：自动化规则与场景切换
+### ORL-F015：四档模式与共享控制
 
-- 证据/边界：E-C05 只有手动曲线草稿，E-C07 只有登录自启和单客户端控制；无命名场景、规则执行器、控制 CLI 或独立后台 agent。现有内核保护与看门狗不是通用自动化规则。
-- 后续基础（E-C09、E-S05）：已提供曲线草稿 v1 的 XDG 保存、迁移、导入导出和备份；状态查询不续租，显式主窗口续租独立执行。配置错误具有 code/message，硬件命令错误仍以字符串为主。
-- 下一步：命名场景、结构化能力/硬件错误、事件和控制所有权；再做可暂停、可解释的规则。当前是单 GUI 所有者，进程内配置串行不等于跨进程事务，多客户端行为需单独验收。
+- 当前依据：根目录架构蓝图。已移除命名场景执行器，配置 v3 保留旧场景数据，不执行历史配方。
+- GUI、托盘和 CLI 复用 `Action` 与同一 `AppRuntime` 锁；后台线程独立续租，退出停止线程并释放控制。
+- 模式和自定义 CPU 参数成功应用后自动保存；启动与导入不自动写电池/开关。WMI 模式键和桌面通知、EC 电池/开关见 Phase 2 增量；其他 Fn 动作待实现。
 
 ### ORL-F016：用户插件与机型配置
 
-- 证据/边界：E-C08 明确旧插件和 `models.json` 文档仅供 Windows 历史参考；E-C07 没有 Linux 插件安装/执行或用户机型配置接口。驱动的内部 DMI/BIOS 白名单是安全匹配，不是可由插件或用户配置扩大的模型库。
-- 下一步：先提供受校验的数据配置、机型证据条目、版本化 Linux SDK 和样例；隔离代码扩展随后实施。引入第三方内容前审查 CSP、逐窗口能力与自定义 IPC 授权；插件不得直接取得设备、EC 地址或完整宿主权限。历史 manifest 不承诺直接兼容。
+- 证据/边界：E-C08 明确旧插件和 `models.json` 文档仅供 Windows 历史参考；E-C07 没有 Linux 插件安装/执行或用户机型配置接口。驱动按厂商与 WMI 匹配，`force` 是显式模块参数，不是插件模型库。
+- 下一步：按当前蓝图移除插件入口，不承诺插件 SDK 或旧 manifest 兼容；历史接口文档仅供溯源。
 
 ## 共享证据索引
 
@@ -164,18 +182,22 @@ HW-01 及权限依据见 E-H01、E-H02、E-C03。`driver-status.json` 是上次�
 | --- | --- | --- |
 | E-C01 | [sysfs 发现、监测与限充](../src-tauri/crates/openrevo-core/src/linux/sysfs.rs)、[Linux 快照](../src-tauri/crates/openrevo-core/src/linux/mod.rs) | 标准系统发现、未知值、限充及亮度目标；不证明特定机器一定公开接口 |
 | E-C02 | [系统策略与 logind](../src-tauri/crates/openrevo-core/src/linux/power.rs)、[标准控制](../src-tauri/crates/openrevo-core/src/linux/controls.rs) | 服务协调、平台档位、通用强冷/功耗上限、权限边界 |
-| E-C03 | [OEM Linux HAL](../src-tauri/crates/openrevo-core/src/hal/linux_ec.rs)、[风扇曲线算法](../src-tauri/crates/openrevo-core/src/hal/fan_curve.rs) | 协议版本、语义帧、CPU 限值、曲线与释放规则 |
-| E-C04 | [内核驱动目录](../drivers/openrevo-ec/)、[硬件字典](../src-tauri/config/ec_registry.json) | 机型/BIOS 匹配、语义事务、内核保护；协议地址保持字典/HAL 边界 |
-| E-C05 | [OEM 调校 UI](../src/components/linux/OemHardwareControls.tsx)、[曲线草稿 UI](../src/components/linux/OemFanCurve.tsx) | 供电门禁、组合校验、草稿与显式应用、故障提示 |
-| E-C06 | [Linux 页面](../src/components/LinuxDashboard.tsx)、[导航](../src/components/linux/navigation.tsx) | 实际展示能力及 GPU/RGB/BLE/插件占位；页面不构成后端实现 |
+| E-C03 | [OEM Linux HAL](../src-tauri/crates/openrevo-core/src/hal/linux_ec.rs)、[风扇曲线算法](../src-tauri/crates/openrevo-core/src/hal/fan_curve.rs) | 传输版本、Rust 事务、CPU 限值、曲线与释放规则 |
+| E-C04 | [内核驱动目录](../drivers/openrevo-ec/)、[硬件字典](../src-tauri/config/ec_registry.json) | 厂商/WMI 匹配、白名单传输、原始事件和内核散热保护；协议地址保持字典/HAL 边界 |
+| E-C05 | [OEM 调校 UI](../src/components/linux/DomainControls.tsx)、[曲线草稿 UI](../src/components/linux/OemFanCurve.tsx) | 供电门禁、组合校验、草稿与显式应用、故障提示 |
+| E-C06 | [Linux 页面](../src/components/LinuxDashboard.tsx)、[导航](../src/components/linux/navigation.tsx) | 能力驱动界面，移除插件和待移植占位卡片，水冷入口按能力隐藏 |
 | E-C07 | [Tauri 宿主](../src-tauri/src/linux.rs)、[IPC 命令](../src-tauri/src/linux/commands.rs)、[前端命令契约](../src/lib/linuxApi.ts)、[状态 hook](../src/hooks/useLinuxBackend.ts) | 活跃命令表、托盘、自启、轮询与写后刷新；无隐藏的旧 Windows 插件运行时 |
 | E-C08 | [插件历史手册](OpenRevo_第三方插件开发手册.md)、[机型配置历史指南](models_customization_guide.md)、[Tauri 配置](../src-tauri/tauri.conf.json)、[默认能力](../src-tauri/capabilities/default.json) | 旧接口不可用声明及后续扩展隔离需要审查的当前边界 |
-| E-C09 | [XDG 配置核心](../src-tauri/crates/openrevo-core/src/config.rs)、[配置 IPC](../src-tauri/src/linux/config_commands.rs)、[草稿 UI](../src/components/linux/OemFanCurve.tsx) | v1 schema、原子保存、前一有效备份、导入导出、保留旧草稿；无自动硬件应用 |
+| E-C09 | [XDG 配置核心](../src-tauri/crates/openrevo-core/src/config.rs)、[配置 IPC](../src-tauri/src/linux/config_commands.rs)、[草稿 UI](../src/components/linux/OemFanCurve.tsx) | v3 schema、v1/v2 迁移、历史场景保留、原子保存、前一有效备份、导入导出、保留旧草稿；无自动硬件应用 |
+| E-C10 | [语义动作](../src-tauri/crates/openrevo-core/src/actions.rs)、[共享运行时](../src-tauri/crates/openrevo-core/src/runtime.rs)、[会话总线](../src-tauri/crates/openrevo-core/src/control_bus.rs)、[CLI](../src-tauri/crates/openrevo-core/src/bin/openrevo-cli.rs)、[统一界面](../src/components/linux/DomainControls.tsx) | 四档模式、后台续租、单控制实例、会话授权与有界等待 |
+| E-C11 | [EC 设备事务](../src-tauri/crates/openrevo-core/src/hal/device_controls.rs)、[总览控件](../src/components/linux/DeviceControls.tsx)、[通知](../src-tauri/src/linux/notifications.rs) | 电池/开关语义、共享位与回滚、默认关闭的模式键及通知分发 |
+| E-S07 | [设备故障测试](../src-tauri/crates/openrevo-core/src/hal/device_controls/tests.rs)、[运行时](../src-tauri/crates/openrevo-core/src/runtime.rs)、[蓝图第三批验证](../linux_architecture_plan.md#第三批phase-2-电池开关与模式键联动2026-11-02) | 100 项核心、1 项 CLI、36 项 Python、17 项窗口与模块编译；仅软件证据 |
 | E-S01 | [sysfs 单元测试](../src-tauri/crates/openrevo-core/src/linux/sysfs/tests.rs)、[标准控制测试](../src-tauri/crates/openrevo-core/src/linux/controls/tests.rs)、E-C02/E-C03 内嵌测试；通过摘要见 [当前版本说明](linux-release-notes.md#验证边界) 和 [发展计划](linux-roadmap.md#当前基础与主要差距) | 基线 `pnpm check`：34 项 Python、41 项核心测试、TypeScript 与字典门禁通过。数量是当时记录，不是后续版本的固定要求 |
 | E-S02 | [原生窗口测试](../tests/linux_webdriver.py)、[Linux CI](../.github/workflows/linux.yml)；通过摘要见 [重构记录](linux-refactor.md#当前软件验证结果)、E-H02 | 原生窗口、非法 IPC、主题/导航、调校/曲线夹具；10 项通过、2 项真实系统/平台写入跳过，夹具不写真实硬件 |
 | E-S03 | [风扇故障注入](../drivers/openrevo-ec/test_fan_transaction.c)、[模式/功耗/强冷故障注入](../drivers/openrevo-ec/test_control_transaction.c)、[生成器测试](../drivers/openrevo-ec/test_generate_header.py)；结果见 [重构记录](linux-refactor.md#当前软件验证结果) 与发展计划 | 基线 333、416 个事务故障注入点及 6 项生成器测试通过；软件生命周期模型不等于真实断电/休眠测试 |
 | E-S04 | [M0 实施验证](m0-validation.md)；本地日志及产物：`dist_release/m0-baseline-20261101-190159/` | 依赖与工具链升级后 34 项 Python、41 项核心、TypeScript、字典、驱动故障注入、workspace Clippy、完整包校验通过；调试与包内生产应用窗口各 10 项通过、2 项真实写回跳过 |
 | E-S05 | [上游 dev 首批吸纳验证](linux-refactor.md#上游-dev-首批吸纳2026-11-01)；本地 `dist_release/upstream-foundation-20261101-yu_5s7ko/` | 基于 `40b88ce` 的未发布工作区：34 项 Python、67 项核心、字典/TypeScript/Clippy、驱动故障注入、完整包校验通过；包内应用窗口 14 项通过、2 项真实写入跳过。不提高硬件 R/L 等级 |
+| E-S06 | [命名场景与 CLI 验证](linux-refactor.md#命名场景与-cli2026-11-01)；本地 `dist_release/named-scenes-cli-20261101-ab4xl_1q/` | 35 项 Python、98 项核心、3 项 CLI、TypeScript/字典/Clippy 通过；真实会话 CLI 读写隔离配置，错误机型场景在写前拒绝；UI 成功/失败路径用夹具，不提高实机 R/L 等级 |
 | E-H01 | [功能与机型范围](linux-port.md#已有实机记录与新驱动状态)、[2026-11-01 事务回归](linux-refactor.md#本机部署与事务回归2026-11-01)；本地原始报告：`dist_release/linux-refactor-20261101/hardware-verification.json`、`ac-hardware-verification.json`（同目录） | 合并完整包前的办公、均衡/狂暴、35/35/70 W、短时强冷及显式恢复；范围 HW-01，无负载/真实曲线/重启/休眠结论 |
 | E-H02 | [完整包验证摘要](linux-release-notes.md#验证边界)；本地原始报告：`dist_release/full-install-20261101-pc9xeldp/verification-report.json` | `0.9.3-linux.2` 本机安装、设备权限、10 项原生窗口、5 秒强冷及恢复、桌面启动；原模块源码标识一致无需重载，不是重启或新模块替换的实测 |
 | E-H03 | 本地历史报告：`dist_release/local-verification-20261101/final-verification.json`、`power-profile-test.json`、`brightness-test.json`、`brightness-service-test.json`（后三项同目录） | `0.9.3-linux.1` 系统档位 GUI 切换/恢复成功；屏幕亮度 logind API 读回/恢复成功，同次 GUI 操作未改变硬件。不得归为当前版 GUI 全流程通过 |

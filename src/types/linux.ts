@@ -33,6 +33,10 @@ export interface LinuxBacklight {
 
 export interface LinuxSnapshot {
   platform: 'linux';
+  domains: LinuxDomains;
+  control_error: string | null;
+  hotkeys_enabled: boolean;
+  hotkey_error: string | null;
   is_mock: false;
   timestamp_ms: number;
   telemetry: Record<string, ReadingMetadata>;
@@ -59,6 +63,7 @@ export interface LinuxSnapshot {
   };
   capabilities: { id: string; name: string; available: boolean; detail: string }[];
   oem: LinuxOemSnapshot;
+  wmi_events: { available: boolean; last_sequence: number | null; last_code: number | null; dropped: number; error: string | null };
   controls: {
     platform: { active: string | null; available: string[]; source: string | null; writable: boolean };
     fans: LinuxFanControl[];
@@ -92,6 +97,7 @@ export interface LinuxOemSnapshot {
   control_abi?: number | null;
   control_backend?: string;
   control_fault?: boolean;
+  water_cooling_supported?: boolean | null;
   available: boolean;
   writable: boolean;
   error: string | null;
@@ -113,7 +119,38 @@ export interface LinuxFanCurveConfig {
   ramp_ms: number;
 }
 
-export interface LinuxAppConfig {
-  version: 1;
-  fan_curve_draft: LinuxFanCurveConfig | null;
+export type LinuxPowerMode = 'office' | 'balanced' | 'turbo' | 'custom';
+export interface LinuxDomains {
+  devices: {
+    battery: { supported: boolean; writable: boolean; mode: 'full' | 'balanced' | 'longevity' | 'custom' | null; lower: number | null; upper: number | null; error: string | null };
+    switches: { id: DeviceSwitch; enabled: boolean | null; writable: boolean; detail: string }[];
+    fault: boolean; error: string | null;
+  };
+  performance: {
+    active: LinuxPowerMode | null;
+    modes: { mode: LinuxPowerMode; enabled: boolean; reason: string | null }[];
+    limits: CpuLimits | null;
+    ceiling: CpuLimits | null;
+    limits_writable: boolean;
+    power_limits: LinuxPowerLimit[];
+    error: string | null;
+  };
+  cooling: {
+    rpm: (number | null)[];
+    boosted: boolean;
+    writable: boolean;
+    error: string | null;
+    curve: LinuxOemSnapshot['fan_curve'];
+    curve_writable: boolean;
+  };
 }
+export interface LinuxAppConfig {
+  version: 3;
+  hotkeys_enabled?: boolean;
+  fan_curve_draft: LinuxFanCurveConfig | null;
+  mode: LinuxPowerMode | null;
+  custom_limits: CpuLimits | null;
+  legacy_scenes?: unknown[];
+}
+
+export type DeviceSwitch = "win_lock" | "fn_lock" | "camera" | "usb_charge" | "ac_recovery" | "touchpad";

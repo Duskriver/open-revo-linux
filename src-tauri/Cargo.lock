@@ -2406,12 +2406,17 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-single-instance",
+ "zbus",
 ]
 
 [[package]]
 name = "openrevo-core"
 version = "0.9.3"
 dependencies = [
+ "async-io",
+ "blocking",
+ "futures-lite",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

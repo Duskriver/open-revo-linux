@@ -8,11 +8,11 @@ import uuid
 
 
 def validate(registry):
-    """Reject malformed values before emitting hardware constants or C code."""
     if not isinstance(registry, dict):
         raise ValueError('Hardware registry must be an object')
     groups = {'ec': 65535, 'mask': 255, 'linux_wmi': 4294967295,
-              'linux_fan': 65535, 'linux_control': 65535}
+              'linux_fan': 65535, 'linux_transport': 255, 'linux_events': 65535,
+              'tongfang_control': 255, 'linux_device': 255, 'wmi_hotkeys': 65535}
     for group, maximum in groups.items():
         values = registry.get(group)
         if not isinstance(values, dict) or not values:
@@ -20,7 +20,7 @@ def validate(registry):
         for name, value in values.items():
             if not re.fullmatch(r'[A-Z][A-Z0-9_]*', name):
                 raise ValueError(f'Invalid C constant name: {group}.{name}')
-            if group == 'linux_wmi' and name == 'GUID':
+            if group == 'linux_wmi' and name in ('GUID', 'EVENT_GUID'):
                 if not isinstance(value, str):
                     raise ValueError('WMI GUID must be a string')
                 uuid.UUID(value)
@@ -28,15 +28,18 @@ def validate(registry):
                 raise ValueError(f'Invalid unsigned integer: {group}.{name}')
     for group in ('linux_ec_read', 'linux_ec_write'):
         names = registry.get(group)
-        if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        if not isinstance(names, list) or not names or any(not isinstance(name, str) for name in names):
             raise ValueError(f'Invalid register whitelist: {group}')
         if len(set(names)) != len(names) or any(name not in registry['ec'] for name in names):
             raise ValueError(f'Unknown or duplicate register in {group}')
-    if not registry['linux_ec_read'] or registry['linux_ec_write']:
-        raise ValueError('Semantic driver requires readable registers and no raw writes')
+        if len({registry['ec'][name] for name in names}) != len(names):
+            raise ValueError(f'Duplicate physical register in {group}')
+    if not set(registry['linux_ec_write']).issubset(registry['linux_ec_read']):
+        raise ValueError('Writable registers must permit readback')
     wmi = registry['linux_wmi']
-    if not isinstance(wmi.get('GUID'), str):
-        raise ValueError('Missing WMI GUID')
+    for name in ('GUID', 'EVENT_GUID'):
+        if not isinstance(wmi.get(name), str):
+            raise ValueError(f'Missing WMI {name}')
     for name in ('INSTANCE', 'METHOD', 'READ', 'WRITE', 'ERROR_SENTINEL'):
         if name not in wmi:
             raise ValueError(f'Missing linux_wmi.{name}')
@@ -53,46 +56,38 @@ def validate(registry):
     if wmi['READ'] > 255 or wmi['WRITE'] > 255 or wmi['READ'] == wmi['WRITE']:
         raise ValueError('WMI operation codes must be distinct bytes')
     layouts = {
-        'linux_fan': {'VERSION': 1, 'FRAME_SIZE': 100, 'VERSION_OFFSET': 0,
+        'linux_transport': {'VERSION': 1},
+        'linux_device': {'VERSION': 1},
+        'linux_events': {'VERSION': 1, 'FRAME_SIZE': 16, 'SEQUENCE_OFFSET': 0,
+                         'CODE_OFFSET': 8, 'VERSION_OFFSET': 12, 'QUEUE_SIZE': 64},
+        'linux_fan': {'VERSION': 2, 'FRAME_SIZE': 100, 'VERSION_OFFSET': 0,
                       'ACTION_OFFSET': 1, 'TABLE_OFFSET': 2, 'TABLE_BYTES': 96,
                       'TABLE_STEPS': 16, 'RAMP_OFFSET': 98, 'ISOLATED_OFFSET': 99},
-        'linux_control': {'VERSION': 1, 'FRAME_SIZE': 8, 'VERSION_OFFSET': 0,
-                          'ACTION_OFFSET': 1, 'ARGUMENT_OFFSET': 2, 'RESERVED_OFFSET': 5},
     }
     for group, layout in layouts.items():
         for name, expected in layout.items():
             if registry[group].get(name) != expected:
                 raise ValueError(f'Unsupported wire layout: {group}.{name}')
-    required = {
-        'linux_fan': ('REQUEST_OFFSET', 'APPLY', 'RESTORE', 'HEARTBEAT', 'DUTY_MAX',
-                      'DUTY_MIN_ACTIVE', 'CONTROL_MIN', 'AP_ACTIVE_MASK', 'ISOLATED_BIT',
-                      'RAMP_ENABLE', 'LEASE_MS', 'CUSTOM_OFF', 'CUSTOM_ON',
-                      'OFFICE_CLAMP', 'BALANCED_CLAMP', 'TURBO_CLAMP'),
-        'linux_control': ('REQUEST_OFFSET', 'MODE', 'POWER', 'BOOST', 'RECOVER',
-                          'AP_PRESENT', 'MODE_PRESERVE', 'MODE_TURBO', 'RAMP_SMOOTH',
-                          'MODE_STATUS_IDLE', 'MODE_STATUS_REQUEST',
-                          'MIN_POWER', 'POWER_INVALID', 'PL4_MARGIN'),
-    }
-    for group, names in required.items():
-        for name in names:
-            if name not in registry[group]:
-                raise ValueError(f'Missing {group}.{name}')
-            if name not in ('REQUEST_OFFSET', 'LEASE_MS') and registry[group][name] > 255:
-                raise ValueError(f'Protocol byte exceeds range: {group}.{name}')
-    for group, actions in (('linux_fan', ('APPLY', 'RESTORE', 'HEARTBEAT')),
-                           ('linux_control', ('MODE', 'POWER', 'BOOST', 'RECOVER'))):
-        if len({registry[group][name] for name in actions}) != len(actions):
-            raise ValueError(f'Duplicate protocol action in {group}')
-    if registry['linux_control']['REQUEST_OFFSET'] == registry['linux_fan']['REQUEST_OFFSET']:
-        raise ValueError('Control and fan request offsets must differ')
-    for group in ('linux_fan', 'linux_control'):
-        if registry[group]['REQUEST_OFFSET'] in registry['ec'].values():
-            raise ValueError(f'{group} request offset overlaps a physical register')
-    fan, control = registry['linux_fan'], registry['linux_control']
-    if control['MODE_STATUS_IDLE'] != 0 or control['MODE_STATUS_REQUEST'] != 1:
-        raise ValueError('Unsupported firmware mode status states')
+    fan = registry['linux_fan']
+    for name in ('REQUEST_OFFSET', 'APPLY', 'RESTORE', 'HEARTBEAT', 'DUTY_MAX',
+                 'DUTY_MIN_ACTIVE', 'CONTROL_MIN', 'AP_ACTIVE_MASK', 'ISOLATED_BIT',
+                 'RAMP_ENABLE', 'LEASE_MS', 'CUSTOM_OFF', 'CUSTOM_ON',
+                 'OFFICE_CLAMP', 'BALANCED_CLAMP', 'TURBO_CLAMP'):
+        if name not in fan or (name not in ('REQUEST_OFFSET', 'LEASE_MS') and fan[name] > 255):
+            raise ValueError(f'Invalid or missing linux_fan.{name}')
+    if len({fan[name] for name in ('APPLY', 'RESTORE', 'HEARTBEAT')}) != 3:
+        raise ValueError('Duplicate fan action')
+    if fan['REQUEST_OFFSET'] in registry['ec'].values():
+        raise ValueError('Fan request offset overlaps a physical register')
     if not fan['LEASE_MS'] or fan['DUTY_MIN_ACTIVE'] > fan['DUTY_MAX'] or fan['CONTROL_MIN'] > fan['DUTY_MAX']:
         raise ValueError('Invalid fan lease or duty limits')
+    control = registry['tongfang_control']
+    for name in ('AP_PRESENT', 'MODE_PRESERVE', 'MODE_TURBO', 'RAMP_SMOOTH',
+                 'MIN_POWER', 'POWER_INVALID', 'PL4_MARGIN'):
+        if name not in control:
+            raise ValueError(f'Missing tongfang_control.{name}')
+    if control.get('MODE_STATUS_IDLE') != 0 or control.get('MODE_STATUS_REQUEST') != 1:
+        raise ValueError('Unsupported firmware mode status states')
     if not control['MIN_POWER'] or not control['PL4_MARGIN'] or control['MIN_POWER'] + control['PL4_MARGIN'] >= control['POWER_INVALID']:
         raise ValueError('Invalid power bounds')
 
@@ -101,12 +96,14 @@ def generate(registry):
     validate(registry)
     lines = ['/* Generated from ec_registry.json. Do not edit. */']
     for group, prefix in [('ec', ''), ('mask', ''), ('linux_wmi', 'OR_WMI_'),
-                          ('linux_fan', 'OR_FAN_'), ('linux_control', 'OR_CONTROL_')]:
+                          ('linux_fan', 'OR_FAN_'), ('linux_transport', 'OR_TRANSPORT_'),
+                          ('linux_events', 'OR_EVENT_'), ('linux_device', 'OR_DEVICE_')]:
         for name, value in registry[group].items():
             lines.append(f'#define {prefix}{name} {json.dumps(value)}')
-    lines.append('static const u16 linux_ec_read[] = {')
-    lines.extend(f'    {name},' for name in registry['linux_ec_read'])
-    lines.append('};')
+    for group in ('linux_ec_read', 'linux_ec_write'):
+        lines.append(f'static const u16 {group}[] = {{')
+        lines.extend(f'    {name},' for name in registry[group])
+        lines.append('};')
     return '\n'.join(lines) + '\n'
 
 

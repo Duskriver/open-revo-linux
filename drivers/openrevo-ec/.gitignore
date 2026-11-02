@@ -8,3 +8,5 @@ Module.symvers
 modules.order
 test_fan_transaction
 test_control_transaction
+
+test_fan_guard

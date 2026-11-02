@@ -33,7 +33,9 @@ Depends: libwebkit2gtk-4.1-0, libayatana-appindicator3-1, libwebkit2gtk-4.1-0
 ''')
         cls.app = cls.output / 'application.deb'
         cls.deb(app_root, cls.app)
-        cls.package, cls.stage = PACKAGE.build(cls.app, cls.output)
+        cls.cli = cls.output / 'openrevo-cli'
+        PACKAGE.DRIVER.write(cls.cli, '#!/bin/sh\nexit 0\n', True)
+        cls.package, cls.stage = PACKAGE.build(cls.app, cls.output, cls.cli)
         cls.package_root = cls.stage / 'root'
 
     @staticmethod
@@ -57,6 +59,20 @@ Depends: libwebkit2gtk-4.1-0, libayatana-appindicator3-1, libwebkit2gtk-4.1-0
         self.assertEqual(control['Conflicts'], 'openrevo-ec-dkms')
         self.assertEqual(control['Replaces'], 'openrevo-ec-dkms')
         self.assertEqual(control['Provides'], f'openrevo-ec-dkms (= {self.version})')
+        self.assertEqual((self.package_root / 'usr/bin/openrevo-cli').read_bytes(), self.cli.read_bytes())
+
+    def test_cli_must_be_present_and_executable(self):
+        case, root = self.fixture()
+        (root / 'usr/bin/openrevo-cli').rename(root / 'usr/bin/renamed-cli')
+        package = case / 'missing-cli.deb'
+        self.deb(root, package)
+        with self.assertRaisesRegex(ValueError, 'Missing complete-package payload'):
+            PACKAGE.verify(package)
+        (root / 'usr/bin/renamed-cli').rename(root / 'usr/bin/openrevo-cli')
+        (root / 'usr/bin/openrevo-cli').chmod(0o644)
+        self.deb(root, package)
+        with self.assertRaisesRegex(ValueError, 'Incorrect executable mode'):
+            PACKAGE.verify(package)
 
     def test_missing_driver_dependency_is_rejected(self):
         case, root = self.fixture()
@@ -161,6 +177,7 @@ Description: Previous split driver fixture
         run('--remove', 'open-revo')
         self.assertEqual(config.read_text(), custom)
         self.assertFalse((install_root / 'usr/bin/open-revo').exists())
+        self.assertFalse((install_root / 'usr/bin/openrevo-cli').exists())
         run('--purge', 'open-revo')
         self.assertFalse(config.exists())
         self.assertEqual(unrelated.read_text(), 'keep\n')

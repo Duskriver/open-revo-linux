@@ -9,11 +9,11 @@
 
 面向机械革命笔记本的社区 Linux 控制中心，由 [Duskriver](https://github.com/Duskriver) 基于 [faintonce/open-revo](https://github.com/faintonce/open-revo) 开发。沿用 Rust、Tauri 2、React 和原有硬件协议积累，当前仅以 Linux 为开发、构建和发布目标。
 
-**当前为预览版。** 标准系统接口按内核能力提供功能；OEM EC 控制仅支持明确核验的机型和 BIOS。部分调校功能已有实现与软件测试，仍待接电带载实测。发布包的功能以对应 Release 说明为准，可能落后于 `main`。
+**当前为预览版。** 标准系统接口按内核能力提供功能；主干 OEM 驱动按 MECHREVO 厂商与 Uniwill WMI GUID 匹配，重构后的写入通道尚未实机验证。部分调校功能已有实现与软件测试，仍待接电带载实测。发布包的功能以对应 Release 说明为准，可能落后于 `main`。
 
 `0.9.3-linux.2` 使用一个同时包含 GUI 与 DKMS 驱动源码的完整 `.deb`。已在维护者本机完成安装、窗口及短时强冷恢复验证，详见 [版本说明](docs/linux-release-notes.md)。
 
-[下载 Linux 预览版](https://github.com/Duskriver/open-revo-linux/releases) · [功能与安装说明](docs/linux-port.md) · [功能与验证台账](docs/linux-feature-ledger.md) · [项目发展计划](docs/linux-roadmap.md) · [分阶段重构记录](docs/linux-refactor.md) · [问题反馈](https://github.com/Duskriver/open-revo-linux/issues)
+[下载 Linux 预览版](https://github.com/Duskriver/open-revo-linux/releases) · [功能与安装说明](docs/linux-port.md) · [功能与验证台账](docs/linux-feature-ledger.md) · [架构与实施计划](linux_architecture_plan.md) · [分阶段重构记录](docs/linux-refactor.md) · [问题反馈](https://github.com/Duskriver/open-revo-linux/issues)
 
 ## 界面
 
@@ -29,13 +29,13 @@
 | 系统与平台性能档位 | 接入 power-profiles-daemon / tuned-ppd 和 ACPI `platform_profile`，按系统授权操作并核对读回 |
 | 标准风扇与功耗接口 | 发现支持的 hwmon / powercap 通道后提供强冷或功耗上限控制，要求设备权限与有效范围 |
 | 屏幕和单色键盘背光 | 使用 backlight / leds 与 systemd-logind，取决于内核接口和桌面会话权限 |
-| 电池限充 | 内核提供 `charge_control_end_threshold` 且当前进程有权限时可用；验证机型目前未公开此接口 |
-| OEM 风扇强冷与恢复 | 新事务驱动在 GM5HG7A 完成 5 秒强冷及释放恢复验证，控制状态与故障标志检查通过 |
-| OEM 办公 / 均衡 / 狂暴模式 | 新事务驱动完成办公及接电均衡/狂暴写入读回，模式切换后恢复通过；实际性能效果未做负载验证 |
-| OEM CPU 功耗与自定义风扇曲线 | 35/35/70 W 自定义功耗写回与原模式恢复通过；曲线具有软件故障测试，实际功耗与带载散热仍待验证 |
+| 电池管理 | EC 三档与双阈值按能力提供；保留标准内核限充入口，新 EC 管线尚未实测 |
+| OEM 风扇强冷与恢复 | 旧版事务驱动在 GM5HG7A 完成 5 秒强冷及释放恢复验证，控制状态与故障标志检查通过 |
+| OEM 办公 / 均衡 / 狂暴模式 | 旧版事务驱动完成办公及接电均衡/狂暴写入读回，模式切换后恢复通过；实际性能效果未做负载验证 |
+| OEM CPU 功耗与自定义风扇曲线 | 旧发布版 35/35/70 W 自定义功耗写回与原模式恢复通过；曲线具有软件故障测试，实际功耗与带载散热仍待验证 |
 | 桌面集成 | 原生窗口、单实例、登录启动、托盘菜单、双主题和诊断导出；托盘显示取决于桌面环境 |
 
-RGB 多色灯效、灯带、BLE 水冷、GPU MUX / 超频、全局快捷键 / OSD 和插件运行环境尚未实现。详细能力、权限和验证范围见 [Linux 功能说明](docs/linux-port.md)。
+主干已接通 EC 快捷开关、显式开启的机身模式键联动与桌面通知；触摸板项仅是 EC 标记。RGB 多色灯效、灯带、BLE 水冷、GPU MUX / 超频、MiniLED 专用控制和插件运行环境尚未实现。详细能力、权限和验证范围见 [Linux 功能说明](docs/linux-port.md)。
 
 系统性能档位与 OEM 机身模式是不同的控制层。寄存器或档位读回成功，也不代表实际 CPU 功耗、性能或散热效果已经完成验证。
 
@@ -43,7 +43,7 @@ RGB 多色灯效、灯带、BLE 水冷、GPU MUX / 超频、全局快捷键 / OS
 
 标准监测和系统控制按 Linux 内核公开的接口发现，不要求 OEM 模块。
 
-当前 OEM EC 模块只匹配以下组合：
+当前主干 OEM EC 模块按 `MECHREVO` + Uniwill WMI GUID 绑定，不再锁定主板或 BIOS；`force=1` 仅绕过厂商检查。绑定成功不等于兼容性已验证。下面是旧版事务驱动的唯一实机记录，新 Rust 事务与驱动需要重新验证：
 
 | 项目 | 值 |
 | --- | --- |
@@ -63,7 +63,7 @@ RGB 多色灯效、灯带、BLE 水冷、GPU MUX / 超频、全局快捷键 / OS
 sudo apt install ./OpenRevo_0.9.3-linux.2_amd64.deb
 ```
 
-APT 会安装 GUI 运行库、DKMS 和编译工具，并自动替换旧的拆分驱动包。已有内核 headers 可以满足依赖；没有时安装发行版通用 headers 元包。安装程序仍会检查 headers 是否与当前运行内核匹配，匹配且机型/BIOS 受支持、签名检查允许时，自动构建并启用驱动。非标准内核需提供匹配 headers；Secure Boot 可能需要按系统提示登记 MOK。升级不会强制卸载忙碌的旧模块，需要重启时安装程序会明确提示。
+APT 会安装 GUI 运行库、DKMS 和编译工具，并自动替换旧的拆分驱动包。已有内核 headers 可以满足依赖；没有时安装发行版通用 headers 元包。安装程序仍会检查 headers 是否与当前运行内核匹配，匹配且厂商/WMI 受支持、签名检查允许时，自动构建并启用驱动。非标准内核需提供匹配 headers；Secure Boot 可能需要按系统提示登记 MOK。升级不会强制卸载忙碌的旧模块，需要重启时安装程序会明确提示。
 
 驱动等待 headers、MOK 或重启，以及机型不受支持时，安装程序会记录 OEM 控制未就绪，应用仍可使用标准系统监控。
 
@@ -123,7 +123,7 @@ pnpm build
 | `src-tauri/src/` | Tauri 窗口、托盘与命令宿主 |
 | `src-tauri/crates/openrevo-core/` | Linux 系统接口、硬件规则、遥测与控制核心 |
 | `src-tauri/config/ec_registry.json` | 集中的寄存器、掩码与协议字典 |
-| `drivers/openrevo-ec/` | 机型专用 WMI / EC 内核模块 |
+| `drivers/openrevo-ec/` | Uniwill WMI / EC 白名单传输与散热保护 |
 | `tests/` | 隔离门禁与原生窗口回归 |
 
 开发遵守 [AGENTS.md](AGENTS.md)，在 `main` 分阶段推进，以 Tag 发布。当前重构保留既有 Linux 功能和硬件策略语义；硬件控制变化需分别通过软件测试与相应实机验证。Windows 软件及其使用说明请访问 [原上游项目](https://github.com/faintonce/open-revo)。

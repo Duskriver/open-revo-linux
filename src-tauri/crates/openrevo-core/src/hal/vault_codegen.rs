@@ -51,7 +51,7 @@ fn access_list(registry: &Value, name: &str, ec: &Constants) -> Result<BTreeSet<
     let list = registry
         .get(name)
         .and_then(Value::as_array)
-        .filter(|list| name == "linux_ec_write" || !list.is_empty())
+        .filter(|list| !list.is_empty())
         .ok_or_else(|| {
             format!("{name}: expected a register-name array (read access must be nonempty)")
         })?;
@@ -140,26 +140,8 @@ fn emit(output: &mut String, name: &str, ty: &str, values: &Constants) {
 }
 
 fn validate_control(values: &Constants) -> Result<(), String> {
-    let get = |name| required(values, "linux_control", name);
-    for (name, expected) in [
-        ("FRAME_SIZE", 8),
-        ("VERSION_OFFSET", 0),
-        ("ACTION_OFFSET", 1),
-        ("ARGUMENT_OFFSET", 2),
-        ("RESERVED_OFFSET", 5),
-    ] {
-        if get(name)? != expected {
-            return Err(format!(
-                "linux_control.{name}: incompatible control frame layout"
-            ));
-        }
-    }
+    let get = |name| required(values, "tongfang_control", name);
     for name in [
-        "VERSION",
-        "MODE",
-        "POWER",
-        "BOOST",
-        "RECOVER",
         "AP_PRESENT",
         "MODE_PRESERVE",
         "MODE_TURBO",
@@ -168,24 +150,26 @@ fn validate_control(values: &Constants) -> Result<(), String> {
         "POWER_INVALID",
         "PL4_MARGIN",
     ] {
-        if get(name)? > u8::MAX.into() {
-            return Err(format!(
-                "linux_control.{name}: does not fit in a protocol byte"
-            ));
-        }
+        get(name)?;
     }
-    let actions = [get("MODE")?, get("POWER")?, get("BOOST")?, get("RECOVER")?];
-    if actions.into_iter().collect::<BTreeSet<_>>().len() != actions.len() {
-        return Err("linux_control: action codes must be distinct".into());
+    if get("MODE_STATUS_IDLE")? != 0 || get("MODE_STATUS_REQUEST")? != 1 {
+        return Err("tongfang_control: invalid firmware consumption states".into());
     }
-    if get("VERSION")? == 0
-        || get("MIN_POWER")? == 0
+    if get("MIN_POWER")? == 0
         || get("PL4_MARGIN")? == 0
         || get("MIN_POWER")? + get("PL4_MARGIN")? >= get("POWER_INVALID")?
     {
-        return Err("linux_control: invalid version or power bounds".into());
+        return Err("tongfang_control: invalid power bounds".into());
     }
-    get("REQUEST_OFFSET")?;
+    Ok(())
+}
+
+fn layout(values: &Constants, group: &str, fields: &[(&str, u64)]) -> Result<(), String> {
+    for (name, expected) in fields {
+        if required(values, group, name)? != *expected {
+            return Err(format!("{group}.{name}: incompatible wire layout"));
+        }
+    }
     Ok(())
 }
 
@@ -196,32 +180,75 @@ pub fn generate(source: &str) -> Result<String, String> {
     // Protocol values fit both supported userspace usize and kernel u32.
     let fan = constants(&registry, "linux_fan", 0, u32::MAX.into())?;
     validate_fan(&fan)?;
-    let control = constants(&registry, "linux_control", 0, u32::MAX.into())?;
+    let control = constants(&registry, "tongfang_control", 0, u8::MAX.into())?;
     validate_control(&control)?;
     let fan_request = required(&fan, "linux_fan", "REQUEST_OFFSET")?;
-    let control_request = required(&control, "linux_control", "REQUEST_OFFSET")?;
-    if fan_request == control_request
-        || ec
-            .values()
-            .any(|address| [fan_request, control_request].contains(address))
-    {
-        return Err(
-            "request offsets must be distinct from each other and physical registers".into(),
-        );
+    if ec.values().any(|address| *address == fan_request) {
+        return Err("fan request offset overlaps a physical register".into());
     }
+    layout(
+        &fan,
+        "linux_fan",
+        &[
+            ("VERSION", 2),
+            ("FRAME_SIZE", 100),
+            ("TABLE_OFFSET", 2),
+            ("VERSION_OFFSET", 0),
+            ("ACTION_OFFSET", 1),
+            ("RAMP_OFFSET", 98),
+            ("ISOLATED_OFFSET", 99),
+        ],
+    )?;
+    let transport = constants(&registry, "linux_transport", 0, u8::MAX.into())?;
+    layout(&transport, "linux_transport", &[("VERSION", 1)])?;
+    let events = constants(&registry, "linux_events", 0, u16::MAX.into())?;
+    layout(
+        &events,
+        "linux_events",
+        &[
+            ("VERSION", 1),
+            ("FRAME_SIZE", 16),
+            ("SEQUENCE_OFFSET", 0),
+            ("CODE_OFFSET", 8),
+            ("VERSION_OFFSET", 12),
+            ("QUEUE_SIZE", 64),
+        ],
+    )?;
     let readable = access_list(&registry, "linux_ec_read", &ec)?;
     let writable = access_list(&registry, "linux_ec_write", &ec)?;
     if !writable.is_subset(&readable) {
         return Err("linux_ec_write: every writable register must permit readback".into());
     }
-    if !writable.is_empty() {
-        return Err("linux_ec_write: raw writes are disabled; use semantic control requests".into());
+    for (name, entries) in [("linux_ec_read", &readable), ("linux_ec_write", &writable)] {
+        let addresses: BTreeSet<_> = entries.iter().map(|name| ec[name]).collect();
+        if addresses.len() != entries.len() {
+            return Err(format!("{name}: duplicate physical register"));
+        }
+    }
+    let device = constants(&registry, "linux_device", 1, 255)?;
+    layout(&device, "linux_device", &[("VERSION", 1)])?;
+    let hotkeys = constants(&registry, "wmi_hotkeys", 1, 65535)?;
+    for name in ["MODE_KEY", "MODE_SWITCH", "CUSTOM_KEY", "DEBOUNCE_MS"] {
+        required(&hotkeys, "wmi_hotkeys", name)?;
     }
     let mut output = String::from("// Generated from config/ec_registry.json. Do not edit.\n\n");
+    emit(&mut output, "linux_device", "usize", &device);
+    emit(&mut output, "wmi_hotkeys", "u32", &hotkeys);
     emit(&mut output, "ec", "u16", &ec);
     emit(&mut output, "mask", "u8", &mask);
     emit(&mut output, "linux_fan", "usize", &fan);
-    emit(&mut output, "linux_control", "usize", &control);
+    emit(&mut output, "tongfang_control", "u8", &control);
+    emit(&mut output, "linux_transport", "usize", &transport);
+    emit(&mut output, "linux_events", "usize", &events);
+    writeln!(output, "pub mod linux_access {{").unwrap();
+    for (name, entries) in [("READABLE", readable), ("WRITABLE", writable)] {
+        writeln!(output, "pub const {name}: &[u16] = &[").unwrap();
+        for entry in entries {
+            writeln!(output, "super::ec::{entry},").unwrap();
+        }
+        writeln!(output, "];\n").unwrap();
+    }
+    writeln!(output, "}}").unwrap();
     Ok(output)
 }
 
@@ -245,7 +272,9 @@ mod tests {
             ("ec", "u16"),
             ("mask", "u8"),
             ("linux_fan", "usize"),
-            ("linux_control", "usize"),
+            ("tongfang_control", "u8"),
+            ("linux_transport", "usize"),
+            ("linux_events", "usize"),
         ] {
             for (name, value) in registry[group].as_object().unwrap() {
                 assert!(output.contains(&format!("pub const {name}: {ty} = {value};")));
@@ -291,7 +320,9 @@ mod tests {
             "ec",
             "mask",
             "linux_fan",
-            "linux_control",
+            "tongfang_control",
+            "linux_transport",
+            "linux_events",
             "linux_ec_read",
             "linux_ec_write",
         ] {
@@ -342,9 +373,9 @@ mod tests {
         assert!(error(&value).contains("permit readback"));
         value = registry();
         value["linux_ec_write"] = serde_json::json!([]);
-        assert!(generate(&value.to_string()).is_ok());
+        assert!(generate(&value.to_string()).is_err());
         value["linux_ec_write"] = serde_json::json!([value["linux_ec_read"][0]]);
-        assert!(error(&value).contains("raw writes are disabled"));
+        assert!(generate(&value.to_string()).is_ok());
     }
 
     #[test]
@@ -355,18 +386,17 @@ mod tests {
     }
 
     #[test]
-    fn control_protocol_rejects_overflow_overlap_and_incompatible_layout() {
-        let mut value = registry();
-        value["linux_control"]["MIN_POWER"] = Value::from(u16::from(u8::MAX) + 1);
-        assert!(error(&value).contains("MIN_POWER"));
-        value = registry();
-        value["linux_control"]["ARGUMENT_OFFSET"] = Value::from(0);
-        assert!(error(&value).contains("ARGUMENT_OFFSET"));
-        value = registry();
-        value["linux_control"]["POWER"] = value["linux_control"]["MODE"].clone();
-        assert!(error(&value).contains("distinct"));
-        value = registry();
-        value["linux_control"]["REQUEST_OFFSET"] = value["linux_fan"]["REQUEST_OFFSET"].clone();
-        assert!(error(&value).contains("request offsets"));
+    fn transport_and_event_layouts_are_checked() {
+        for (group, name, invalid) in [
+            ("tongfang_control", "MIN_POWER", 256),
+            ("linux_transport", "VERSION", 2),
+            ("linux_events", "FRAME_SIZE", 15),
+            ("linux_events", "CODE_OFFSET", 9),
+            ("tongfang_control", "MODE_STATUS_IDLE", 1),
+        ] {
+            let mut value = registry();
+            value[group][name] = Value::from(invalid);
+            assert!(error(&value).contains(group));
+        }
     }
 }

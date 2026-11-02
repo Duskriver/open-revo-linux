@@ -95,7 +95,8 @@ class FakeHost:
             elif args[1] == 'info':
                 output = 'TAGS=:uaccess:seat:\nID_SEAT=seat0\n'
             elif args[1] == 'trigger':
-                assert args == ['udevadm', 'trigger', '--action=add', str(self.root / 'sys/class/misc/openrevo_ec')]
+                assert args[:3] == ['udevadm', 'trigger', '--action=add']
+                assert args[3] in [str(self.root / 'sys/class/misc' / name) for name in ('openrevo_ec', 'openrevo_events')]
         elif executable == 'loginctl':
             if args[1] == 'show-seat':
                 output = '2\n' if self.session else ''
@@ -228,6 +229,14 @@ class DriverSetupTests(unittest.TestCase):
             with self.subTest(state=state):
                 _, _, setup = self.fixture(**options)
                 self.configure(setup, state)
+
+    def test_existing_event_node_gets_new_session_permissions(self):
+        root, runner, setup = self.fixture()
+        events = root / 'sys/class/misc/openrevo_events'
+        events.mkdir()
+        self.configure(setup, 'ready')
+        self.assertTrue(any(args == ['udevadm', 'trigger', '--action=add', str(events)]
+                            for args, _ in runner.calls))
 
     def test_acl_mask_and_udev_failures_cannot_report_ready(self):
         _, _, setup = self.fixture(mask='r--')

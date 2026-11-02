@@ -4,7 +4,9 @@
 //! versioned application document. Directory descriptors anchor every operation;
 //! symbolic links and non-regular files are rejected.
 
+use crate::actions::PowerMode;
 use crate::hal::fan_curve::FanCurveConfig;
+use crate::hal::linux_ec::CpuLimits;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -15,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-pub const CONFIG_VERSION: u32 = 1;
+pub const CONFIG_VERSION: u32 = 3;
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const CONFIG_FILE: &str = "config.json";
 const BACKUP_FILE: &str = "config.json.bak";
@@ -31,6 +33,15 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub struct AppConfig {
     pub version: u32,
     pub fan_curve_draft: Option<FanCurveConfig>,
+    #[serde(default)]
+    pub mode: Option<PowerMode>,
+    #[serde(default)]
+    pub hotkeys_enabled: bool,
+    #[serde(default)]
+    pub custom_limits: Option<CpuLimits>,
+    /// Archived v2 recipes are data only; there is no execution endpoint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub legacy_scenes: Vec<serde_json::Value>,
 }
 
 impl Default for AppConfig {
@@ -38,8 +49,19 @@ impl Default for AppConfig {
         Self {
             version: CONFIG_VERSION,
             fan_curve_draft: None,
+            mode: None,
+            hotkeys_enabled: false,
+            custom_limits: None,
+            legacy_scenes: Vec::new(),
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyAppConfig {
+    version: u32,
+    fan_curve_draft: Option<FanCurveConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -123,14 +145,32 @@ impl ConfigStore {
         &self,
         draft: Option<&FanCurveConfig>,
     ) -> Result<AppConfig, ConfigError> {
-        let config = AppConfig {
-            version: CONFIG_VERSION,
-            fan_curve_draft: draft.cloned(),
-        };
-        validate_config(&config)?;
-        self.save(config)
+        self.update(|config| {
+            config.fan_curve_draft = draft.cloned();
+            Ok(())
+        })
     }
 
+    pub fn save_mode(
+        &self,
+        mode: PowerMode,
+        limits: Option<CpuLimits>,
+    ) -> Result<AppConfig, ConfigError> {
+        self.update(|config| {
+            config.mode = Some(mode);
+            if let Some(limits) = limits {
+                config.custom_limits = Some(limits);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn save_hotkeys(&self, enabled: bool) -> Result<AppConfig, ConfigError> {
+        self.update(|config| {
+            config.hotkeys_enabled = enabled;
+            Ok(())
+        })
+    }
     /// Export validated JSON, not a path. Missing configuration remains missing.
     pub fn export_json(&self) -> Result<Option<String>, ConfigError> {
         self.load()?.map(|config| encode(&config)).transpose()
@@ -138,18 +178,37 @@ impl ConfigStore {
 
     /// Import is an explicit settings write only; it never activates the draft.
     pub fn import_json(&self, json: &str) -> Result<AppConfig, ConfigError> {
-        self.save(decode(json.as_bytes())?)
+        let imported = decode(json.as_bytes())?;
+        self.update(move |config| {
+            *config = imported;
+            Ok(())
+        })
     }
 
-    fn save(&self, config: AppConfig) -> Result<AppConfig, ConfigError> {
-        let encoded = encode(&config)?;
+    fn update(
+        &self,
+        mutation: impl FnOnce(&mut AppConfig) -> Result<(), ConfigError>,
+    ) -> Result<AppConfig, ConfigError> {
         let _guard = store_lock()?;
-        // Validate before creating anything, so damaged/future settings cannot be
-        // overwritten and a missing application directory stays a distinct state.
-        let directory = open_directory(&self.directory, true)?.ok_or_else(|| {
-            ConfigError::new("config_io", "Could not open the configuration directory")
-        })?;
-        let previous = read_document(&directory, CONFIG_FILE)?;
+        let existing_directory = open_directory(&self.directory, false)?;
+        let previous = match &existing_directory {
+            Some(directory) => read_document(directory, CONFIG_FILE)?,
+            None => None,
+        };
+        let mut config = previous
+            .as_ref()
+            .map(|(_, config)| config.clone())
+            .unwrap_or_default();
+        mutation(&mut config)?;
+        // Keep the whole read/modify/validate/write operation under one lock.
+        // A failed mutation or oversize document creates no files or backup.
+        let encoded = encode(&config)?;
+        let directory = match existing_directory {
+            Some(directory) => directory,
+            None => open_directory(&self.directory, true)?.ok_or_else(|| {
+                ConfigError::new("config_io", "Could not open the configuration directory")
+            })?,
+        };
         check_target(&directory, BACKUP_FILE)?;
         if let Some((bytes, _)) = previous {
             atomic_write(&directory, BACKUP_FILE, &bytes)?;
@@ -295,17 +354,70 @@ fn decode(bytes: &[u8]) -> Result<AppConfig, ConfigError> {
             format!("Configuration JSON is invalid; existing data was preserved: {error}"),
         )
     })?;
-    if let Some(version) = value.get("version").and_then(serde_json::Value::as_u64) {
-        if version != u64::from(CONFIG_VERSION) {
-            return Err(ConfigError::new("config_version", format!("Configuration version {version} is unsupported (expected {CONFIG_VERSION}); existing data was preserved")));
-        }
+    let version = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            ConfigError::new(
+                "config_invalid",
+                "Configuration version must be an unsigned integer",
+            )
+        })?;
+    if !(1..=u64::from(CONFIG_VERSION)).contains(&version) {
+        return Err(ConfigError::new("config_version", format!("Configuration version {version} is unsupported (supported: 1..={CONFIG_VERSION}); existing data was preserved")));
     }
     // FanCurvePoint is also used by hardware IPC. Apply strict document keys here
     // without changing that existing protocol's deserializer.
-    if let Some(draft) = value
-        .get("fan_curve_draft")
-        .filter(|draft| !draft.is_null())
-    {
+    check_curve_point_fields(value.get("fan_curve_draft"))?;
+    let schema_error = |error| {
+        ConfigError::new(
+            "config_invalid",
+            format!("Configuration schema is invalid; existing data was preserved: {error}"),
+        )
+    };
+    let config: AppConfig = if version == 1 {
+        let legacy: LegacyAppConfig = serde_json::from_slice(bytes).map_err(schema_error)?;
+        if legacy.version != 1 {
+            return Err(ConfigError::new(
+                "config_version",
+                "Legacy configuration version must be 1",
+            ));
+        }
+        AppConfig {
+            version: CONFIG_VERSION,
+            fan_curve_draft: legacy.fan_curve_draft,
+            mode: None,
+            hotkeys_enabled: false,
+            custom_limits: None,
+            legacy_scenes: Vec::new(),
+        }
+    } else if version == 2 {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct V2 {
+            version: u32,
+            fan_curve_draft: Option<FanCurveConfig>,
+            #[serde(default)]
+            scenes: Vec<serde_json::Value>,
+        }
+        let legacy: V2 = serde_json::from_slice(bytes).map_err(schema_error)?;
+        if legacy.version != 2 {
+            return Err(ConfigError::new("config_version", "Expected version 2"));
+        }
+        AppConfig {
+            fan_curve_draft: legacy.fan_curve_draft,
+            legacy_scenes: legacy.scenes,
+            ..AppConfig::default()
+        }
+    } else {
+        serde_json::from_slice(bytes).map_err(schema_error)?
+    };
+    validate_config(&config)?;
+    Ok(config)
+}
+
+fn check_curve_point_fields(draft: Option<&serde_json::Value>) -> Result<(), ConfigError> {
+    if let Some(draft) = draft.filter(|draft| !draft.is_null()) {
         for curve in ["cpu", "gpu"] {
             if let Some(points) = draft.get(curve).and_then(serde_json::Value::as_array) {
                 for point in points {
@@ -321,14 +433,7 @@ fn decode(bytes: &[u8]) -> Result<AppConfig, ConfigError> {
             }
         }
     }
-    let config: AppConfig = serde_json::from_slice(bytes).map_err(|error| {
-        ConfigError::new(
-            "config_invalid",
-            format!("Configuration schema is invalid; existing data was preserved: {error}"),
-        )
-    })?;
-    validate_config(&config)?;
-    Ok(config)
+    Ok(())
 }
 
 fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
@@ -346,6 +451,17 @@ fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
             )
         })?;
     }
+    if let Some(limits) = config.custom_limits {
+        if limits.pl1 < 15
+            || limits.pl1 > limits.pl2
+            || u16::from(limits.pl4) < u16::from(limits.pl2) + 20
+        {
+            return Err(ConfigError::new(
+                "config_invalid",
+                "Invalid custom CPU limits",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -358,6 +474,12 @@ fn encode(config: &AppConfig) -> Result<String, ConfigError> {
         )
     })?;
     json.push('\n');
+    if json.len() > MAX_CONFIG_BYTES {
+        return Err(ConfigError::new(
+            "config_too_large",
+            "Encoded configuration exceeds the 64 KiB limit",
+        ));
+    }
     Ok(json)
 }
 

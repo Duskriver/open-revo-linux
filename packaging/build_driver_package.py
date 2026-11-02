@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / 'packaging/dkms'
 PACKAGE = 'openrevo-ec-dkms'
 SOURCES = (
-    'openrevo_ec.c', 'fan_transaction.h', 'control_transaction.h',
-    'test_fan_transaction.c', 'test_control_transaction.c', 'generate_header.py',
+    'openrevo_ec.c', 'fan_transaction.h', 'fan_guard.h', 'wmi_events.h', 'test_ec_fixture.h',
+    'test_fan_transaction.c', 'test_fan_guard.c', 'generate_header.py',
     'test_generate_header.py',
 )
 
@@ -113,7 +113,7 @@ Depends: dkms (>= 2.8.7), python3, kmod, udev
 Recommends: linux-headers-generic | linux-headers-amd64
 Installed-Size: {(size + 1023) // 1024}
 Homepage: https://github.com/Duskriver/open-revo-linux
-Description: DKMS source for the model-verified OpenRevo EC driver
+Description: DKMS source for the Uniwill WMI OpenRevo EC driver
  Provides the Linux WMI control module for supported Mechrevo laptops.
  Requires matching kernel headers. Uses distribution DKMS signing settings.
 ''')

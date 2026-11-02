@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/* Uniwill's firmware-serialized EC mailbox, verified on GM5HG7A.
- * Read vault-listed registers; write versioned semantic control requests.
+/* Uniwill firmware-serialized EC mailbox.
+ * Vault-listed byte transport, cooling watchdog and WMI events.
  * No raw ports, ACPI debug interface, arbitrary method or address access.
  */
 #include <linux/acpi.h>
@@ -24,7 +24,10 @@
 
 static bool allow_writes;
 module_param(allow_writes, bool, 0644);
-MODULE_PARM_DESC(allow_writes, "Enable validated OEM requests (default read only)");
+MODULE_PARM_DESC(allow_writes, "Enable vault-listed EC writes (default read only)");
+static bool force;
+module_param(force, bool, 0444);
+MODULE_PARM_DESC(force, "Allow non-MECHREVO vendor; Uniwill WMI GUID is still required");
 static DEFINE_MUTEX(ec_lock);
 static struct wmi_device *ec_device;
 static bool ec_stopping;
@@ -87,7 +90,7 @@ static const char *ec_field_name(u16 address)
     case ADDR_AC_RECOVERY: return "mode_indicator_a";
     case ADDR_CAMERA_CUTOFF: return "mode_indicator_b";
     case ADDR_MODE_INDEX: return "mode_index";
-    case ADDR_TURBO_TRIGGER_1115: return "mode_trigger";
+    case ADDR_MODE_REQUEST: return "mode_trigger";
     case ADDR_FAN_RAMP_RATE: return "fan_ramp";
     case ADDR_FAN_ISOLATED: return "fan_isolation";
     case ADDR_CUSTOM_PL4: return "cpu_peak_limit";
@@ -111,13 +114,15 @@ static void ec_report_failure(const char *phase, const char *step, u16 address,
                         phase, step, ec_field_name(address), error, expected, actual);
 }
 #include "fan_transaction.h"
-static void queue_watchdog(void);
-#include "control_transaction.h"
+#include "fan_guard.h"
 static unsigned int fan_curve_abi = OR_FAN_VERSION;
-static unsigned int control_abi = OR_CONTROL_VERSION;
+static unsigned int device_controls_abi = OR_DEVICE_VERSION;
+module_param(device_controls_abi, uint, 0444);
+static unsigned int transport_abi = OR_TRANSPORT_VERSION;
 module_param(fan_curve_abi, uint, 0444);
-module_param(control_abi, uint, 0444);
-module_param(control_fault, bool, 0444);
+module_param(transport_abi, uint, 0444);
+module_param(boost_owned, bool, 0444);
+module_param(boost_release_pending, bool, 0444);
 module_param(fan_curve_active, bool, 0444);
 module_param(fan_curve_fault, bool, 0444);
 static unsigned long fan_deadline;
@@ -126,26 +131,26 @@ static DECLARE_DELAYED_WORK(fan_work, fan_watchdog);
 
 static void queue_watchdog(void)
 {
-    mod_delayed_work(system_wq, &fan_work, msecs_to_jiffies(2000));
+    /* Heartbeats must not push back a pending power-loss/recovery check. */
+    if (!ec_stopping && cooling_pending())
+        schedule_delayed_work(&fan_work, msecs_to_jiffies(2000));
 }
 
 static void fan_watchdog(struct work_struct *work)
 {
     u8 power;
     mutex_lock(&ec_lock);
-    if (control_fault && control_restore())
-        pr_warn_ratelimited("openrevo_ec: OEM transaction restore failed; maximum cooling requested\n");
-    if (fan_curve_active) {
-        if (time_after_eq(jiffies, fan_deadline) ||
-            transfer(ADDR_POWER_STATUS, &power, false) || !(power & POWER_STATUS_DC_JACK)) {
-            if (fan_restore())
-                pr_warn_ratelimited("openrevo_ec: fan table restore failed; maximum cooling requested\n");
-        }
+    if (time_after_eq(jiffies, fan_deadline)) {
+        if (cooling_restore())
+            pr_warn_ratelimited("openrevo_ec: cooling restoration pending after lease expiry\n");
+    } else if (fan_curve_active &&
+        (!system_power() || transfer(ADDR_POWER_STATUS, &power, false) || !(power & POWER_STATUS_DC_JACK))) {
+        if (fan_restore())
+            pr_warn_ratelimited("openrevo_ec: fan restoration pending after power loss\n");
     }
-    if (boost_release_pending && control_release_boost())
-        pr_warn_ratelimited("openrevo_ec: released fan boost restore is pending\n");
-    if (fan_curve_active || control_fault || boost_release_pending)
-        schedule_delayed_work(&fan_work, msecs_to_jiffies(2000));
+    if (boost_release_pending && boost_restore())
+        pr_warn_ratelimited("openrevo_ec: fan boost restoration pending\n");
+    queue_watchdog();
     mutex_unlock(&ec_lock);
 }
 
@@ -164,49 +169,21 @@ static ssize_t fan_request(const char __user *buffer, size_t count)
     }
     switch (frame[OR_FAN_ACTION_OFFSET]) {
     case OR_FAN_APPLY:
-        result = !allow_writes ? -EROFS : control_fault ? -EIO : fan_apply(frame);
+        result = !allow_writes ? -EROFS : boost_release_pending ? -EBUSY : fan_apply(frame);
         break;
     case OR_FAN_RESTORE:
         result = fan_restore();
         break;
     case OR_FAN_HEARTBEAT:
-        result = fan_curve_fault ? -EIO : 0;
+        result = cooling_heartbeat(time_after_eq(jiffies, fan_deadline));
         break;
     default:
         result = -EINVAL;
     }
-    if (fan_curve_active) {
-        if (!result)
-            fan_deadline = jiffies + msecs_to_jiffies(OR_FAN_LEASE_MS);
-        mod_delayed_work(system_wq, &fan_work, msecs_to_jiffies(2000));
-    }
+    if (!result && cooling_pending())
+        fan_deadline = jiffies + msecs_to_jiffies(OR_FAN_LEASE_MS);
+    queue_watchdog();
 unlock:
-    mutex_unlock(&ec_lock);
-    return result ? result : sizeof(frame);
-}
-
-static ssize_t control_request(const char __user *buffer, size_t count)
-{
-    u8 frame[OR_CONTROL_FRAME_SIZE];
-    int result;
-    if (count != sizeof(frame))
-        return -EINVAL;
-    if (copy_from_user(frame, buffer, sizeof(frame)))
-        return -EFAULT;
-    result = control_validate(frame);
-    if (result)
-        return result;
-    mutex_lock(&ec_lock);
-    if (!ec_device || ec_stopping)
-        result = -ENODEV;
-    else
-        result = control_dispatch(frame, allow_writes);
-    if (result)
-        pr_warn_ratelimited("openrevo_ec: control action=%s failed error=%d recovery_pending=%d\n",
-                           control_action_name(frame[OR_CONTROL_ACTION_OFFSET]),
-                           result, control_pending);
-    if (control_fault)
-        mod_delayed_work(system_wq, &fan_work, msecs_to_jiffies(2000));
     mutex_unlock(&ec_lock);
     return result ? result : sizeof(frame);
 }
@@ -217,7 +194,7 @@ static int ec_open(struct inode *inode, struct file *file)
     mutex_lock(&ec_lock);
     if (!ec_device || ec_stopping)
         result = -ENODEV;
-    else if (opened || control_pending || boost_release_pending)
+    else if (opened || cooling_pending())
         result = -EBUSY;
     else
         opened = true;
@@ -228,10 +205,9 @@ static int ec_open(struct inode *inode, struct file *file)
 static int ec_release(struct inode *inode, struct file *file)
 {
     mutex_lock(&ec_lock);
-    if (control_release_owned())
+    if (cooling_restore())
         pr_warn("openrevo_ec: hardware restoration pending after release\n");
-    if (!ec_stopping && (fan_curve_active || control_fault || boost_release_pending))
-        mod_delayed_work(system_wq, &fan_work, msecs_to_jiffies(2000));
+    queue_watchdog();
     opened = false;
     mutex_unlock(&ec_lock);
     return 0;
@@ -253,12 +229,26 @@ static ssize_t or_read(struct file *file, char __user *buffer, size_t count, lof
 
 static ssize_t or_write(struct file *file, const char __user *buffer, size_t count, loff_t *pos)
 {
+    u8 value;
+    int result;
+    bool was_owned;
     if (*pos == OR_FAN_REQUEST_OFFSET && count == OR_FAN_FRAME_SIZE)
         return fan_request(buffer, count);
-    if (*pos == OR_CONTROL_REQUEST_OFFSET && count == OR_CONTROL_FRAME_SIZE)
-        return control_request(buffer, count);
-    /* No raw write fallback: callers cannot bypass the semantic validators. */
-    return -EOPNOTSUPP;
+    if (count != 1 || !listed(*pos, linux_ec_write, ARRAY_SIZE(linux_ec_write)))
+        return -EINVAL;
+    if (copy_from_user(&value, buffer, 1))
+        return -EFAULT;
+    mutex_lock(&ec_lock);
+    was_owned = boost_owned;
+    result = (!ec_device || ec_stopping) ? -ENODEV : raw_write(*pos, value, allow_writes);
+    /* A new boost gets its initial lease even if the write lost its reply.
+     * Subsequent writes never refresh ownership; only HEARTBEAT does that.
+     */
+    if (!was_owned && boost_owned)
+        fan_deadline = jiffies + msecs_to_jiffies(OR_FAN_LEASE_MS);
+    queue_watchdog();
+    mutex_unlock(&ec_lock);
+    return result ? result : 1;
 }
 
 static const struct file_operations ec_fops = {
@@ -279,13 +269,10 @@ static struct miscdevice ec_misc = {
 static int ec_probe(struct wmi_device *wdev, const void *context)
 {
     int result;
-    /* Never assume that a shared WMI GUID implies compatible EC registers. */
-    if (!dmi_match(DMI_SYS_VENDOR, "MECHREVO") ||
-        !dmi_match(DMI_BOARD_NAME, "GM5HG7A") ||
-        !dmi_match(DMI_BIOS_VERSION, "N.1.09MRO19"))
+    if (!force && !dmi_match(DMI_SYS_VENDOR, "MECHREVO"))
         return -ENODEV;
     mutex_lock(&ec_lock);
-    if (ec_device || opened) {
+    if (ec_device || opened || cooling_pending()) {
         mutex_unlock(&ec_lock);
         return -EBUSY;
     }
@@ -306,12 +293,8 @@ static void ec_remove(struct wmi_device *wdev)
     mutex_unlock(&ec_lock);
     cancel_delayed_work_sync(&fan_work);
     mutex_lock(&ec_lock);
-    if (control_restore())
-        pr_warn("openrevo_ec: OEM transaction restore failed on removal\n");
-    if (fan_restore())
-        pr_warn("openrevo_ec: fan table restore failed on removal\n");
-    if (boost_release_pending && control_release_boost())
-        pr_warn("openrevo_ec: fan boost restore failed on removal\n");
+    if (cooling_restore())
+        pr_warn("openrevo_ec: cooling restoration failed on removal\n");
     ec_device = NULL;
     mutex_unlock(&ec_lock);
 }
@@ -329,14 +312,19 @@ static int ec_suspend(struct device *device)
     mutex_unlock(&ec_lock);
     cancel_delayed_work_sync(&fan_work);
     mutex_lock(&ec_lock);
-    result = control_suspend_quiesce();
+    result = cooling_restore();
+    if (result) {
+        ec_stopping = false;
+        queue_watchdog();
+    }
     mutex_unlock(&ec_lock);
     return result;
 }
 static int ec_resume(struct device *device)
 {
     mutex_lock(&ec_lock);
-    control_resume_work();
+    ec_stopping = false;
+    queue_watchdog();
     mutex_unlock(&ec_lock);
     return 0;
 }
@@ -354,6 +342,25 @@ static struct wmi_driver ec_driver = {
     .probe = ec_probe,
     .remove = ec_remove,
 };
-module_wmi_driver(ec_driver);
+#include "wmi_events.h"
+
+static int __init openrevo_init(void)
+{
+    int result = wmi_driver_register(&ec_driver);
+    if (result)
+        return result;
+    result = wmi_driver_register(&event_driver);
+    if (result)
+        wmi_driver_unregister(&ec_driver);
+    return result;
+}
+
+static void __exit openrevo_exit(void)
+{
+    wmi_driver_unregister(&event_driver);
+    wmi_driver_unregister(&ec_driver);
+}
+module_init(openrevo_init);
+module_exit(openrevo_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("OpenRevo GM5HG7A Uniwill WMI EC transport");
+MODULE_DESCRIPTION("OpenRevo Uniwill WMI EC transport and events");

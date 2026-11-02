@@ -2,7 +2,7 @@
 
 本分支以 Linux 为唯一目标，保留 [OpenRevo 上游](https://github.com/faintonce/open-revo) 的来源与 GPL-3.0-or-later 许可。技术栈为 Tauri 2、Rust、React 和 TypeScript，普通用户运行 GUI。
 
-当前 main 已完成 Linux 入口与核心整理，并接入新的内核事务协议。`0.9.3-linux.2` 将 GUI 和 DKMS 驱动源码合并为一个完整 Debian 包，已在维护者本机完成安装与验证。`v0.9.3-linux.1` 预览包早于这些改动。阶段记录见 [linux-refactor.md](linux-refactor.md)。
+当前 main 按根目录 [架构蓝图](../linux_architecture_plan.md) 改造：模式/CPU 事务迁入 Rust，内核提供白名单传输、散热恢复和原始 WMI 事件。这批驱动只有离线验证，尚未安装或实机验证。`0.9.3-linux.2` 将 GUI 和 DKMS 驱动源码合并为一个完整 Debian 包，已在维护者本机完成安装与验证。`v0.9.3-linux.1` 预览包早于这些改动。阶段记录见 [linux-refactor.md](linux-refactor.md)。
 
 ## 功能与验证范围
 
@@ -12,13 +12,14 @@
 | CPU、内存、温度、风扇、电池 | procfs、sysfs、hwmon；缺失数据保持未知，不回退 MockHAL |
 | 系统/平台性能档位 | 优先经 power-profiles-daemon 或 tuned-ppd 协调，写后核对读回；遵守系统授权 |
 | 屏幕及单色键盘背光 | backlight / leds + systemd-logind；需要活动会话授权 |
-| 电池限充 | 使用内核 `charge_control_end_threshold`；当前 GM5HG7A 未公开该接口 |
-| OEM 模式、强冷、CPU 功耗 | GM5HG7A 专用 WMI 内核模块，使用版本化事务接口 |
+| 电池限充 | EC 能力声明有效时提供三档/双阈值，要求设备控制 ABI v1；否则使用标准内核接口 |
+| OEM 模式、强冷、CPU 功耗 | MECHREVO + Uniwill WMI 匹配，Rust 事务经白名单传输执行；新通道未实测 |
 | 自定义风扇曲线 | 八点草稿、显式应用、读回、恢复、租约及故障保护；带载实测未完成 |
+| 四档模式与 CLI | GUI、托盘和 CLI 共用语义动作；配置 v3 自动保存模式/自定义功耗；后台线程维护租约 |
 | 主题、自启动、诊断 | 保留 Mono / Cyber、XDG 登录启动和 JSON 导出 |
-| RGB、水冷、GPU MUX、插件 | 尚未实现 Linux 控制，页面明确标注支持状态 |
+| RGB、水冷、GPU MUX | 专用控制待后续阶段；移除占位卡片和插件 Tab，水冷入口按能力隐藏 |
 
-系统档位、OEM 模式和 CPU 功耗限制是不同控制层。系统服务管理平台档位时，应用不另外争抢同一个 sysfs 策略。寄存器读回正确不等于 CPU 实际耗电、温度或模式灯外观已验证。
+前端通过 `domains` 读取统一的性能和散热能力，通过 `execute_linux_action` 执行动作；后端选择 EC 或标准接口。系统服务管理平台档位时，应用不另外争抢同一个 sysfs 策略。寄存器读回正确不等于 CPU 实际耗电、温度或模式灯外观已验证。
 
 ### 已有实机记录与新驱动状态
 
@@ -43,22 +44,69 @@
 - `src-tauri/src/linux.rs`、`src-tauri/src/linux/commands.rs`：窗口、托盘、生命周期与稳定 IPC 名称。
 - `src-tauri/crates/openrevo-core/src/linux/`：系统发现与策略协调。
 - `src-tauri/crates/openrevo-core/src/hal/`：协议编码、风扇算法、读取与严格字典生成器。
-- `drivers/openrevo-ec/`：独立 WMI 驱动、模式/功耗事务和无硬件故障测试。
+- `drivers/openrevo-ec/`：独立 WMI 驱动、白名单传输、散热保护、原始事件队列和无硬件故障测试。
 - `packaging/`：完整 Debian 包构建、校验与 DKMS 维护脚本；独立驱动包保留为开发入口。
 
-EC 物理地址、掩码和帧布局由 `src-tauri/config/ec_registry.json` 登记，Rust/C 构建阶段检查格式、范围和布局。新模块不接受用户指定地址的单字节写入，只接收版本化的模式、功耗、强冷和曲线请求。
+EC 物理地址、掩码和帧布局由 `src-tauri/config/ec_registry.json` 登记，Rust/C 构建阶段检查格式、范围和布局。新模块接受白名单内的单字节读写；风扇表和锁存器不在写白名单，只能通过内核整表事务访问。GUI/CLI 仅公开语义动作，没有裸地址接口。
 
-驱动只匹配上述型号和 BIOS，加载默认只读；安装包为此明确匹配的驱动配置写入开关。通过 udev `uaccess` 授予活动本地会话设备访问权。GUI 不提权，不修改系统 Polkit 策略。
+驱动按 `MECHREVO` 厂商与 Uniwill WMI GUID 匹配，移除主板/BIOS 锁；`force=1` 仅绕过厂商检查，安装包不启用它。模块加载默认只读，安装包保留 `allow_writes=1` 配置。匹配成功不代表新机型已验证。通过 udev `uaccess` 授予活动本地会话设备访问权。GUI 不提权，不修改系统 Polkit 策略。
 
-模式和功耗事务在内核中持锁执行，检查供电及出厂上限，提交后读回；失败恢复完整前状态，恢复失败保留备份并请求强冷、重试。强冷只改变其控制位，保留同一寄存器中的模式位。模式/功耗成功后仍保持到用户再次修改；不因关闭窗口而自动撤销。
+模式和功耗事务在 Rust 的共享运行时锁中执行，重新检查供电及出厂上限，先停用自定义功耗，再按 PL4/PL2/PL1 顺序暂存并读回，最后提交。失败恢复前状态；恢复失败时保留备份、请求强冷并由后台重试。进程崩溃后内核仍恢复临时散热控制，但不能重放尚未完成的 Rust 业务回滚。强冷只改变其控制位，保留同一寄存器中的模式位。模式/功耗成功后仍保持到用户再次修改；不因关闭窗口而自动撤销。
 
 自定义曲线沿用已有帧协议和插值规则，应用要求系统供电与 EC 圆口供电同时满足。退出、租约过期、圆口断电、休眠时恢复原策略；硬件或总线失效时不能保证恢复写入成功，界面会显示错误。曲线草稿可离线编辑保存，启动时不自动应用。
 
 未发布主干已将草稿保存到 `$XDG_CONFIG_HOME/OpenRevo/config.json`，未设置 XDG 路径时使用 `~/.config/OpenRevo/config.json`。首次读取无配置文件时，校验并迁移旧 WebView 草稿，原 localStorage 副本保留。支持导出已保存草稿和导入 JSON；导入只改变配置，不应用风扇。每次覆盖保留上一份有效文件 `config.json.bak`；损坏、新版 schema、超过 64 KiB 或含非法曲线的文件会报错，不自动覆盖或恢复。配置路径不支持符号链接，当前仅保证单进程内串行读写。
 
-状态查询不再延长控制租约。主窗口单独发送续租；十秒没有成功的新状态后停止续租，并保留恢复操作入口。界面使用单调时钟判断数据是否过期，系统页和诊断 JSON 展示标准传感器、CPU/内存/供电及静态身份的来源和有效采样时间。电池、背光与 OEM 子字段仍待逐项元数据化；静态身份的旧采样时间代表缓存来源，不代表动态数据过期。
+状态查询不延长控制租约。`AppRuntime` 后台线程每两秒检查并续租，隐藏或暂停 WebView 不会停止控制。界面十秒没有新状态时暂停新调节并保留恢复操作入口；后台继续工作，进程退出则释放临时控制。界面使用单调时钟判断数据是否过期，系统页和诊断 JSON 展示标准传感器、CPU/内存/供电及静态身份的来源和有效采样时间。电池、背光与 OEM 子字段仍待逐项元数据化；静态身份的旧采样时间代表缓存来源，不代表动态数据过期。
 
-新应用要求匹配的 `control_abi`。旧、未知或无法读取协议版本的模块仅用于监测，控制页面提示升级；不保留旧单字节写入兼容路径。应用与模块应配套更新。
+新应用要求 `transport_abi=1` 和风扇协议 v2。旧、未知或无法读取协议版本的模块仅用于监测，控制页面提示升级；旧应用也不能通过新驱动写入。应用与模块应配套更新。
+
+`/dev/openrevo_events` 是独立只读、独占读取的事件设备，固定 16 字节小端帧包含序号、原始代码和版本；64 项队列溢出时丢弃最旧项，序号缺口可见。后台有界非阻塞读取，诊断快照包含最后事件及丢失计数；默认不启用联动；可在总览或通过 `hotkeys on` 显式开启。如果系统 `uniwill-wmi` 等驱动已占用事件 GUID，事件节点可能缺失，EC 通道独立可用；程序不会解绑系统驱动。
+
+EC 水冷能力位提供 `true` / `false` / 未知探测结果；这不代表 BlueZ 控制已支持，也不创建占位控制页。ITE HID、sysfs 限充与 powercap 的专用赋权规则随对应功能另行实现。
+
+### 四档模式、后台运行与 CLI
+
+当前开发依据为根目录 [Linux 架构蓝图](../linux_architecture_plan.md)。本批完成运行时和界面基础：办公、均衡、狂暴、自定义使用同一语义入口，后端按设备能力决定可用档位。自定义模式应用保存的 CPU 参数；未保存时取当前参数，仍经过供电和出厂限值检查。应用成功后自动保存模式、功耗或曲线；配置写入失败会明确报告硬件已经应用。
+
+配置 v3 保存曲线草稿、最后选择的模式与自定义功耗。v1/v2 读取仅在内存迁移，首次保存保留原文备份；旧场景保存在 `legacy_scenes`，不再提供场景编辑或执行。导入及启动不会自动写硬件。
+
+关闭主窗口在托盘创建成功时隐藏窗口；托盘提供四档模式、强冷、恢复自动、电池三档和退出。无法创建托盘时保留正常关闭行为。退出停止后台续租并释放控制。后台线程运行在桌面进程中，不是独立 systemd 服务。
+
+完整包附带 `openrevo-cli`，通过同用户会话 D-Bus 复用运行中的 `AppRuntime`，窗口可隐藏。示例：
+
+```sh
+openrevo-cli status
+openrevo-cli mode office
+openrevo-cli mode custom
+openrevo-cli cpu 35 45 70
+openrevo-cli fan boost
+openrevo-cli fan auto
+openrevo-cli battery full
+openrevo-cli battery longevity
+openrevo-cli battery custom 70 80
+openrevo-cli switch fn_lock on
+openrevo-cli hotkeys on
+openrevo-cli battery BAT0 80
+openrevo-cli config
+openrevo-cli release-controls
+```
+
+`battery full|balanced|longevity` 控制 EC 预设（95/100、75/80、55/60）；`battery custom LOWER UPPER` 设置双阈值，`battery DEVICE LIMIT` 保留标准内核接口。`switch` 支持 win_lock / fn_lock / camera / usb_charge / ac_recovery / touchpad；touchpad 仅同步 EC 标记，不能代替 Linux 桌面的输入开关。CLI 不直接打开第二个硬件连接，也不自动启动宿主。超时不代表服务端动作取消，先检查 `status`，不要自动重试。
+
+`--json` 放在命令前，输出 `{version, ok, result, error}`。退出码为 0 成功、1 操作失败、2 参数错误、3 传输错误。新驱动按厂商/WMI 匹配，模式/CPU 与设备业务事务在 Rust 执行，白名单由字典生成。
+
+### Phase 2 设备与按键边界
+
+总览的 EC 电池区显示满充、均衡、长效与自定义双阈值；系统有标准限充接口时仅在 EC 不支持时展示该标准控制。电池能力位、原策略或阈值读取无效时禁写。没有平台身份伪装、强制解锁或自动回写保持线程。
+
+设备控制要求 `device_controls_abi=1`；旧驱动继续监测，提示配套更新。曲线正在使用模式/功耗备份时，先恢复原风扇策略再调节设备。成功的电池/开关设置不随关闭窗口撤销；启动和导入不重新写这些设置。
+
+按键联动默认关闭，配置 v3 新增可选 `hotkeys_enabled`。后台每 100 ms 非阻塞读取事件，控制维护仍每两秒执行。已登记的模式键使用同一四档动作与模式指示灯路径，跳过当前供电/权限不允许的档位；初次自定义使用有效的已保存参数或办公出厂表。未知事件不触发动作，500 ms 去抖，丢帧批次、长时间停顿及等待控制锁后的旧事件不重放，写模式后的回声不再次切换。关闭窗口后继续工作。
+
+成功模式变化和按键错误通过 Freedesktop 桌面通知反馈；没有通知服务时控制仍可完成，通知投递不占用硬件线程。当前只联动模式键，Fn 亮度/其他事件仍保持只读诊断。MiniLED 上游实现属于木珑专用 WMI，不复用到同方 EC；此开关继续待实现。触摸板 EC 标记不保证 Linux 输入设备关闭。
+
+本批软件测试不代表已验证 EC 固件限充行为、摄像头实际断电、真实按键码或桌面通知外观。实机安装和验证另行执行。
 
 ## 构建与启动
 
@@ -79,11 +127,11 @@ pnpm linux:dev
 pnpm linux:build
 ```
 
-版本、窗口与应用打包配置统一在 `src-tauri/tauri.conf.json`。`pnpm linux:build` 先构建 Tauri 应用，再合入 DKMS 源码和维护脚本，最终输出 `dist_release/OpenRevo_<version>_amd64.deb`。`src-tauri/target/release/bundle/deb/` 中的 Tauri 应用包是中间产物，不单独分发。构建不会安装或加载模块。程序依赖系统 GTK/WebKit 动态库；本机新发行版构建不保证能在更老系统运行，应用 CI 使用 Ubuntu 22.04 构建。
+版本、窗口与应用打包配置统一在 `src-tauri/tauri.conf.json`。`pnpm linux:build` 先构建 Tauri 应用和 CLI，再合入 DKMS 源码和维护脚本，最终输出 `dist_release/OpenRevo_<version>_amd64.deb`。`src-tauri/target/release/bundle/deb/` 中的 Tauri 应用包是中间产物，不单独分发。构建不会安装或加载模块。程序依赖系统 GTK/WebKit 动态库；本机新发行版构建不保证能在更老系统运行，应用 CI 使用 Ubuntu 22.04 构建。
 
 ## 完整 Debian 包安装与升级
 
-用户只需安装一个完整包，其中包含 GUI、机型驱动源码、字典快照、生成头、维护脚本和系统配置。联网运行 APT，让包管理器安装 GUI 运行库、DKMS、Python、kmod、udev、编译工具与内核 headers 依赖。已安装的 headers 可通过 `linux-headers` 虚拟包满足依赖，避免仅因缺少通用元包而额外升级内核；没有 headers 时，APT 安装发行版通用 headers 元包。安装命令：
+用户只需安装一个完整包，其中包含 GUI、CLI、机型驱动源码、字典快照、生成头、维护脚本和系统配置。联网运行 APT，让包管理器安装 GUI 运行库、DKMS、Python、kmod、udev、编译工具与内核 headers 依赖。已安装的 headers 可通过 `linux-headers` 虚拟包满足依赖，避免仅因缺少通用元包而额外升级内核；没有 headers 时，APT 安装发行版通用 headers 元包。安装命令：
 
 ```sh
 sudo apt install ./OpenRevo_0.9.3-linux.2_amd64.deb
@@ -140,10 +188,11 @@ make -C drivers/openrevo-ec test
 cargo clippy --manifest-path src-tauri/Cargo.toml -p openrevo-core --all-targets -- -D warnings
 cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked
 pnpm tauri build --debug --no-bundle
+cargo build --manifest-path src-tauri/Cargo.toml -p openrevo-core --bin openrevo-cli --locked
 dbus-run-session -- xvfb-run -a python3 tests/linux_webdriver.py
 ```
 
-原生窗口测试需要 `tauri-driver`、`WebKitWebDriver` 和 Xvfb。默认不执行真实硬件写入，两个当前档位写回检查跳过；UI 夹具不会把控制请求送给真实硬件。只有在明确授权后设置 `OPENREVO_TEST_HARDWARE_WRITES=1` 才运行该两项检查。它们也不能代替接电负载或异常恢复实测。
+原生窗口测试需要 `tauri-driver`、`WebKitWebDriver` 和 Xvfb；核心会话测试还使用隔离的 `dbus-daemon`。CI 设置 `OPENREVO_TEST_SCREENSHOT_BACKEND=x11`，强制测试应用使用同一 Xvfb，并通过现有 GDK 库捕获画面，避免 WebKitGTK 静态页面截图等待呈现更新超时；截图为空仍失败。本地默认保留 WebDriver 截图。默认不执行真实硬件写入，两个当前档位写回检查跳过；UI 夹具不会把控制请求送给真实硬件。只有在明确授权后设置 `OPENREVO_TEST_HARDWARE_WRITES=1` 才运行该两项检查。它们也不能代替接电负载或异常恢复实测。
 
 `linux_ec_probe` 示例默认只读。经明确确认后可用 `--office` 验证办公模式、`--fan-smoke` 验证 5 秒强冷及释放恢复，或 `--ac-smoke` 验证均衡/狂暴和 35/35/70 W 功耗并恢复均衡。接电测试只接受原装电源、原厂均衡模式、自动风扇和已核验的出厂表；即使检查失败，也会尝试恢复并报告恢复结果。成功应用的模式和功耗不会仅靠进程退出自动撤销，因此该示例显式恢复均衡模式。
 

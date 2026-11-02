@@ -9,11 +9,18 @@
 
 A community Linux control center for MECHREVO laptops, maintained by [Duskriver](https://github.com/Duskriver) and derived from [faintonce/open-revo](https://github.com/faintonce/open-revo). It retains Rust, Tauri 2, React and the upstream hardware protocol work. Linux is the sole development, build and release target of this fork.
 
-**This is a preview.** Standard controls depend on interfaces exposed by the Linux kernel. OEM EC controls are limited to an explicitly verified model and BIOS. Some tuning features are implemented and software-tested but still await powered, under-load hardware validation. Released packages may lag behind `main`; consult the notes for the version you install.
+**This is a preview.** Standard controls depend on interfaces exposed by the Linux kernel. The main-branch EC driver matches MECHREVO + Uniwill WMI; its refactored transport has not yet been hardware-tested. Some tuning features are implemented and software-tested but still await powered, under-load hardware validation. Released packages may lag behind `main`; consult the notes for the version you install.
 
 `0.9.3-linux.2` combines the GUI and DKMS driver source in one complete `.deb`. Installation, native-window tests and a short fan-boost/restore test have passed on the maintainer's machine; see the [release notes](docs/linux-release-notes.md).
 
 [Linux downloads](https://github.com/Duskriver/open-revo-linux/releases) · [Capabilities and installation](docs/linux-port.md) · [Phased refactoring record](docs/linux-refactor.md) · [Issue tracker](https://github.com/Duskriver/open-revo-linux/issues)
+
+The unreleased main branch follows [the architecture plan](linux_architecture_plan.md).
+Mode/CPU transactions now run in Rust over a whitelisted EC transport. The
+kernel matches MECHREVO + Uniwill WMI and retains cooling recovery. The new
+driver and raw WMI event channel have only offline validation; hardware results
+below belong to the previously released transaction driver. Applications and
+drivers must be upgraded together (transport ABI 1, cooling ABI 2).
 
 ## Interface
 
@@ -43,7 +50,7 @@ System profiles and OEM chassis modes are separate control layers. Successful pr
 
 Standard monitoring and system controls discover interfaces provided by the Linux kernel and do not require the OEM module.
 
-The OEM EC module currently matches only this combination:
+The main-branch driver no longer locks the board or BIOS; force=1 bypasses only the vendor check. Binding does not establish hardware compatibility. Historical hardware results below belong to the previously released driver:
 
 | Property | Value |
 | --- | --- |
@@ -63,7 +70,7 @@ The complete package is named `OpenRevo_<version>_amd64.deb`. Build it from sour
 sudo apt install ./OpenRevo_0.9.3-linux.2_amd64.deb
 ```
 
-APT installs the GUI libraries, DKMS and build tools, and replaces the old separate driver package automatically. Installed kernel headers can satisfy the dependency; otherwise APT installs a distribution generic headers metapackage. The installer checks that headers match the running kernel, then builds and enables the driver when the model and BIOS are supported and signature checks permit loading. Nonstandard kernels require matching headers. Secure Boot may require MOK enrollment through the system's prompts. Upgrades never force-unload a busy old module; the installer reports when a reboot is required.
+APT installs the GUI libraries, DKMS and build tools, and replaces the old separate driver package automatically. Installed kernel headers can satisfy the dependency; otherwise APT installs a distribution generic headers metapackage. The installer checks that headers match the running kernel, then builds and enables the driver when the vendor and WMI GUID match and signature checks permit loading. Nonstandard kernels require matching headers. Secure Boot may require MOK enrollment through the system's prompts. Upgrades never force-unload a busy old module; the installer reports when a reboot is required.
 
 When the driver needs headers, MOK enrollment or a reboot, or the hardware is unsupported, the installer records that OEM controls are not ready. Standard system monitoring remains available.
 
@@ -137,3 +144,9 @@ The OpenRevo name, [banner](docs/logo_s.jpg), [icon](src/assets/logo.png) and ex
 Thanks to [faintonce/open-revo](https://github.com/faintonce/open-revo) for the original implementation, [BetterRGB](https://github.com/ZavierChen/BetterRGB-ITE8291-Adaptive) for related exploration, and the [TUXEDO driver project](https://github.com/tuxedocomputers/tuxedo-drivers) for Linux protocol references.
 
 This is an independent community project, not official MECHREVO or TongFang software.
+
+The unreleased Phase 2 implementation adds capability-gated EC battery presets
+and custom charge thresholds, EC device switches, opt-in physical mode-key
+cycling, and native desktop notifications. It requires device_controls_abi=1.
+The touchpad switch changes only the EC flag; MiniLED and other Fn-key actions
+remain pending. This batch has software validation only.

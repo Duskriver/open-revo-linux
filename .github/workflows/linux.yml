@@ -51,13 +51,25 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11
+          sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev linux-headers-generic patchelf webkit2gtk-driver xvfb dbus-x11
       - run: pnpm install --frozen-lockfile
       - run: pnpm linux:check
       - run: make -C drivers/openrevo-ec test
+      - name: Compile kernel module without loading it
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          headers = sorted(Path('/usr/src').glob('linux-headers-*-generic'))
+          if not headers:
+              raise SystemExit('No distribution kernel headers installed')
+          subprocess.run(['make', '-C', 'drivers/openrevo-ec', f'KDIR={headers[-1]}'], check=True)
+          PY
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml -p openrevo-core --all-targets --locked -- -D warnings
       - name: Build native test application
-        run: pnpm tauri build --debug --no-bundle -- --locked
+        run: |
+          pnpm tauri build --debug --no-bundle -- --locked
+          cargo build --manifest-path src-tauri/Cargo.toml -p openrevo-core --bin openrevo-cli --locked
       - name: Install Tauri WebDriver
         env:
           TAURI_DRIVER_VERSION: ${{ steps.toolchain.outputs.tauri_driver }}

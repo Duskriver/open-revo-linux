@@ -12,5 +12,5 @@ test: vault_generated.h
 	python3 test_generate_header.py
 	$(CC) -std=c11 -Wall -Wextra -Werror -Wno-unused-const-variable -o test_fan_transaction test_fan_transaction.c
 	./test_fan_transaction
-	$(CC) -std=c11 -Wall -Wextra -Werror -Wno-unused-const-variable -Wno-unused-function -o test_control_transaction test_control_transaction.c
-	./test_control_transaction
+	$(CC) -std=c11 -Wall -Wextra -Werror -Wno-unused-const-variable -Wno-unused-function -o test_fan_guard test_fan_guard.c
+	./test_fan_guard

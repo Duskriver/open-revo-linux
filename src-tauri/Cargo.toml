@@ -19,6 +19,7 @@ resolver = "2"
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 openrevo-core = { path = "crates/openrevo-core" }
 tauri = { version = "2.12.5", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.7.0"

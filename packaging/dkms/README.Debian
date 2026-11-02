@@ -1,7 +1,7 @@
 OpenRevo EC driver for Ubuntu and Debian
 ======================================
 
-This package contains the source for the model-verified OpenRevo EC driver.
+This package contains the source for the Uniwill WMI OpenRevo EC driver.
 It requires headers matching the kernel you intend to use. DKMS builds and
 installs the module for available kernels and rebuilds it after kernel upgrades.
 Read installation output: missing kernel headers can defer the module build.
@@ -10,7 +10,7 @@ Secure Boot signing uses the distribution's DKMS configuration and keys.
 Complete its MOK enrollment procedure if requested. This package does not
 disable Secure Boot, generate its own signing policy, or enroll keys silently.
 
-The application and driver must support the same control ABI. Close the
+The application and driver must support the same transport and cooling ABIs. Close the
 application and reboot after an upgrade to activate the newly built module.
 Package installation and removal never force an active module to unload.
 
@@ -19,6 +19,26 @@ resolved before configuring this package. Its maintainer scripts report such
 files and leave them intact. Do not operate two copies of the controller.
 
 Run the graphical application as the desktop user. The udev rule grants device
-access to the active local session. The driver itself limits the supported
-machine and BIOS and validates hardware commands. Unknown models remain
-unsupported by the EC module; standard Linux telemetry is independent of it.
+access to the active local session. The driver binds MECHREVO vendor systems exposing the Uniwill EC WMI GUID;
+there is no board/BIOS allowlist. A matching GUID is not validation of every
+machine's register contract. The app validates factory tables before writes.
+The force=1 module option bypasses only the vendor check, not the WMI GUID or
+register whitelist. It is not enabled by this package.
+
+Raw writes are restricted to the shared registry whitelist. Mode and CPU
+transactions and rollback run in Rust. Kernel fan ownership restores curves
+and boost after release, lease expiry, suspend, or removal; failed restores
+are retried while the device is available. Process crashes do not replay an
+unfinished Rust CPU/mode transaction.
+
+/dev/openrevo_events is a separate read-only, single-reader raw WMI stream.
+It exposes event sequence numbers and codes, without dispatching key actions.
+If a system driver (such as uniwill-wmi) already owns the event GUID, this node
+may be absent even when EC controls work. No existing driver is unbound.
+The udev rules grant the active local session access to both device nodes.
+
+Device controls require device_controls_abi=1. Battery presets and custom
+thresholds require the EC capability flag and valid existing policy. No platform
+identity spoofing is performed. Device writes are blocked while a custom fan
+curve is active. Win-lock pulses are never automatically repeated on timeout.
+Physical mode key linkage is opt-in in the app settings (or CLI hotkeys on).

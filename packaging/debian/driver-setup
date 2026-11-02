@@ -203,7 +203,7 @@ class DriverSetup:
         if not sysfs.exists():
             raise SetupOutcome('unsupported-hardware',
                                'The module loaded, but no supported EC device was bound. Standard system '
-                               'monitoring remains available. The driver enforces its model and BIOS list; '
+                               'monitoring remains available. The driver requires MECHREVO vendor and the Uniwill WMI GUID; '
                                'check sudo journalctl -k for WMI/probe errors.', 0)
         writes = self.path('/sys/module/' + MODULE + '/parameters/allow_writes')
         if not writes.is_file() or writes.read_text().strip().lower() not in ('y', '1'):
@@ -213,6 +213,10 @@ class DriverSetup:
         self.checked(['udevadm', 'control', '--reload-rules'], 'udev-failed', 'Could not reload udev rules')
         self.checked(['udevadm', 'trigger', '--action=add', str(sysfs)], 'udev-failed',
                      'Could not refresh the EC device permissions')
+        events = self.path('/sys/class/misc/openrevo_events')
+        if events.exists():
+            self.checked(['udevadm', 'trigger', '--action=add', str(events)], 'udev-failed',
+                         'Could not refresh the WMI event device permissions')
         self.checked(['udevadm', 'settle', '--timeout=10'], 'udev-failed', 'Timed out waiting for permissions')
         if not device.exists() or not stat.S_ISCHR(device.stat().st_mode):
             raise SetupOutcome('device-node-missing', f'{device} is not a character device. {RETRY}')

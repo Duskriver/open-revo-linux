@@ -103,7 +103,7 @@ fn damaged_and_future_documents_are_distinct_from_missing_and_never_overwritten(
     for (bytes, expected) in [
         (b"{broken".as_slice(), "config_invalid"),
         (
-            b"{\"version\":2,\"new_setting\":true}".as_slice(),
+            b"{\"version\":99,\"new_setting\":true}".as_slice(),
             "config_version",
         ),
     ] {
@@ -144,8 +144,9 @@ fn rejects_invalid_curve_and_unknown_settings_before_creating_files() {
         "config_invalid"
     );
     let mut value = serde_json::to_value(AppConfig {
-        version: 1,
+        version: CONFIG_VERSION,
         fan_curve_draft: Some(curve(300)),
+        ..AppConfig::default()
     })
     .unwrap();
     value["fan_curve_draft"]["cpu"][0]["address"] = 42.into();
@@ -183,6 +184,7 @@ fn import_export_validate_json_without_accepting_paths() {
     let original = AppConfig {
         version: CONFIG_VERSION,
         fan_curve_draft: Some(curve(1000)),
+        ..AppConfig::default()
     };
     assert_eq!(
         store.import_json(&encode(&original).unwrap()).unwrap(),
@@ -324,4 +326,71 @@ fn independent_instances_serialize_writes_and_never_publish_partial_documents() 
         names,
         vec![OsString::from(CONFIG_FILE), OsString::from(BACKUP_FILE)]
     );
+}
+
+#[test]
+fn legacy_configs_preserve_scenes_as_inert_data_and_backup_original_bytes() {
+    for version in [1, 2] {
+        let (_root, store, directory) = fixture();
+        fs::create_dir_all(&directory).unwrap();
+        let mut old = serde_json::json!({"version":version,"fan_curve_draft":curve(500)});
+        if version == 2 {
+            old["scenes"] = serde_json::json!([{"name":"Work", "system_profile":"balanced"}]);
+        }
+        let bytes = serde_json::to_vec(&old).unwrap();
+        fs::write(directory.join(CONFIG_FILE), &bytes).unwrap();
+        let config = store.load().unwrap().unwrap();
+        assert_eq!(config.version, 3);
+        assert_eq!(config.legacy_scenes.len(), usize::from(version == 2));
+        assert_eq!(fs::read(directory.join(CONFIG_FILE)).unwrap(), bytes);
+        let saved = store
+            .save_mode(
+                PowerMode::Custom,
+                Some(CpuLimits {
+                    pl1: 35,
+                    pl2: 45,
+                    pl4: 70,
+                }),
+            )
+            .unwrap();
+        assert_eq!(saved.legacy_scenes, config.legacy_scenes);
+        assert_eq!(saved.fan_curve_draft, config.fan_curve_draft);
+        assert_eq!(saved.mode, Some(PowerMode::Custom));
+        assert_eq!(fs::read(directory.join(BACKUP_FILE)).unwrap(), bytes);
+        assert_eq!(store.load().unwrap(), Some(saved));
+    }
+}
+
+#[test]
+fn mode_settings_reject_invalid_cpu_tuples_before_writing() {
+    let (_root, store, directory) = fixture();
+    assert!(store
+        .save_mode(
+            PowerMode::Custom,
+            Some(CpuLimits {
+                pl1: 60,
+                pl2: 50,
+                pl4: 70
+            })
+        )
+        .is_err());
+    assert!(!directory.exists());
+    assert!(store
+        .import_json(r#"{"version":3,"mode":"unknown"}"#)
+        .is_err());
+    assert!(store.import_json(r#"{"version":1,"scenes":[]}"#).is_err());
+}
+
+#[test]
+fn hotkey_opt_in_defaults_off_and_roundtrips_without_changing_tuning() {
+    let (_root, store, _directory) = fixture();
+    let original = store.save_mode(PowerMode::Balanced, None).unwrap();
+    assert!(!original.hotkeys_enabled);
+    let saved = store.save_hotkeys(true).unwrap();
+    assert_eq!(saved.mode, original.mode);
+    assert!(store.load().unwrap().unwrap().hotkeys_enabled);
+    let imported = store
+        .import_json(r#"{"version":3,"fan_curve_draft":null}"#)
+        .unwrap();
+    assert!(!imported.hotkeys_enabled);
 }

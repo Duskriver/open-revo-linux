@@ -89,6 +89,7 @@ pub const FAN_TABLE_TURBO: FanTableData = FanTableData {
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct FanCurvePoint {
     pub temp: u8,
     pub duty: u8,

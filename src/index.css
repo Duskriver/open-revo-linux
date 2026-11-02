@@ -28,6 +28,8 @@
   --text-dim: #64748b;
 
   /* --- 4. Physical Scale & Mesh (圆角与间距规范) --- */
+  --space-sm: 0.5rem;
+  --control-width-sm: 4.5rem;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -3328,4 +3330,9 @@ body,
 .shared-fan-select { position: relative; display: inline-flex; align-items: center; }
 .shared-fan-select > svg { position: absolute; right: var(--space-xs); pointer-events: none; color: var(--text-muted); }
 .shared-fan-editor .shared-fan-select select { appearance: none; -webkit-appearance: none; color-scheme: dark; background: var(--surface-overlay); color: var(--text-primary); padding-right: calc(var(--space-lg) + var(--space-xs)); }
+
+/* Named settings recipes share the system rows, surfaces and theme tokens. */
 [data-theme="mono"] .shared-fan-editor .tuning-header-title { color: var(--text-primary); }
+
+.device-threshold { inline-size: var(--control-width-sm); padding: var(--space-sm); border: 1px solid var(--border-medium); border-radius: var(--radius-sm); background: var(--surface-overlay); color: var(--text-primary); }
+[data-theme="mono"] .device-threshold { background: var(--surface-overlay); color: var(--text-primary); }

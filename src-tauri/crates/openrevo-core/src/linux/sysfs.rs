@@ -282,6 +282,10 @@ impl Sysfs {
             capabilities: Vec::new(),
             controls: Default::default(),
             oem: Default::default(),
+            domains: Default::default(),
+            control_error: None,
+            hotkeys_enabled:false,hotkey_error:None,
+            wmi_events: Default::default(),
         }
     }
 

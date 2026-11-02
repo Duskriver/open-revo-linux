@@ -6,6 +6,8 @@ import importlib.util
 import io
 import os
 from pathlib import Path, PurePosixPath
+import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -92,7 +94,7 @@ def verify(package, version=None):
     payload = archive_files(package)
     scripts = archive_files(package, control=True)
     required = {
-        'usr/bin/open-revo', 'usr/share/applications/OpenRevo.desktop',
+        'usr/bin/open-revo', 'usr/bin/openrevo-cli', 'usr/share/applications/OpenRevo.desktop',
         'usr/lib/open-revo/driver-setup', 'usr/lib/udev/rules.d/70-openrevo-ec.rules',
         'usr/share/doc/open-revo/copyright', 'usr/share/doc/open-revo/README.Debian',
         'usr/share/doc/open-revo/build-info.json',
@@ -104,6 +106,9 @@ def verify(package, version=None):
     missing = required - payload.keys()
     if missing:
         raise ValueError(f'Missing complete-package payload: {sorted(missing)}')
+    for name in ('usr/bin/open-revo', 'usr/bin/openrevo-cli'):
+        if payload[name][1] != 0o755:
+            raise ValueError(f'Incorrect executable mode: {name}')
     if any(name.endswith(('.ko', '.ko.xz', '.ko.zst', '.o', '.exe')) for name in payload):
         raise ValueError('Unexpected precompiled driver or Windows payload')
     if {name for name in payload if name.startswith('etc/')} != {path.lstrip('/') for path in CONFFILES}:
@@ -135,7 +140,7 @@ def verify(package, version=None):
     return control
 
 
-def build(app_package, output_dir):
+def build(app_package, output_dir, cli_binary=None):
     version = DRIVER.version_value(DRIVER.default_version())
     app_package = Path(app_package).resolve(strict=True)
     output = Path(output_dir).resolve()
@@ -152,10 +157,16 @@ def build(app_package, output_dir):
         raise ValueError('Input must be a Tauri application-only package')
     if original_scripts.keys() - {'control', 'md5sums'}:
         raise ValueError('Unexpected Tauri lifecycle metadata; review before merging')
+    cli_binary = Path(cli_binary or ROOT / 'src-tauri/target/release/openrevo-cli')
+    cli_mode = cli_binary.lstat().st_mode
+    if not stat.S_ISREG(cli_mode) or not cli_mode & 0o111:
+        raise ValueError('CLI binary must be a regular executable file')
     output.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix='linux-package-', dir=output))
     package_root = stage / 'root'
     subprocess.run(['dpkg-deb', '--raw-extract', str(app_package), str(package_root)], check=True)
+    shutil.copyfile(cli_binary, package_root / 'usr/bin/openrevo-cli')
+    (package_root / 'usr/bin/openrevo-cli').chmod(0o755)
     DRIVER.stage_payload(version, ROOT / 'drivers/openrevo-ec', package_root, PACKAGE)
     DRIVER.write(package_root / 'usr/lib/open-revo/driver-setup',
                  (TEMPLATES / 'driver-setup').read_text(encoding='ascii'), executable=True)
@@ -170,7 +181,7 @@ def build(app_package, output_dir):
         'Section': 'utils',
         'Homepage': 'https://github.com/Duskriver/open-revo-linux',
         'Description': 'OpenRevo Linux laptop control center with EC driver\n'
-                       ' Desktop application and DKMS source for supported Mechrevo laptops.\n'
+                       ' Desktop application, session CLI and DKMS source for supported Mechrevo laptops.\n'
                        ' Installs the driver using distribution kernel headers and DKMS signing.',
     })
     files = sorted(path for path in package_root.rglob('*') if path.is_file()
@@ -198,6 +209,7 @@ def build(app_package, output_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app-package', type=Path)
+    parser.add_argument('--cli-binary', type=Path)
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'dist_release')
     parser.add_argument('--verify', type=Path, metavar='PACKAGE')
     args = parser.parse_args()
@@ -206,7 +218,7 @@ def main():
             verify(args.verify)
         else:
             source = args.app_package or ROOT / 'src-tauri/target/release/bundle/deb' / f'OpenRevo_{DRIVER.default_version()}_amd64.deb'
-            build(source, args.output_dir)
+            build(source, args.output_dir, args.cli_binary)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError, tarfile.TarError) as error:
         parser.exit(1, f'Complete package operation failed: {error}\n')
 
